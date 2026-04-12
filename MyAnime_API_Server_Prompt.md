@@ -201,14 +201,6 @@ EpisodeStatus 枚举：unwatched, watched, skippedThisWeek
      - Runner target 添加 packageProductDependencies
   3. MACOSX_DEPLOYMENT_TARGET 须 >= 13.0（LaunchAtLogin-Modern 要求 macOS 13+）
      pbxproj 中所有 3 处 MACOSX_DEPLOYMENT_TARGET（Debug/Release/Profile）都要改
-- **关闭到托盘（close-to-tray）：**
-  - `AppDelegate.swift` 的 `applicationShouldTerminateAfterLastWindowClosed` 必须返回 `false`
-    （默认返回 `true`，会导致关闭窗口时整个应用退出而非隐藏到托盘）
-- **Dock 图标隐藏/显示：**
-  - 最小化/关闭到托盘时隐藏 Dock 图标，从托盘恢复时重新显示
-  - 在 `AppDelegate.swift` 的 `applicationDidFinishLaunching` 中注册 MethodChannel（如 `com.yuanzhe.my_anime/dock`）
-  - 处理 `setDockIconVisible` 方法：`NSApp.setActivationPolicy(.accessory)` 隐藏、`.regular` 显示
-  - Flutter 端 `tray_service.dart` 在窗口隐藏/显示时调用该 channel
 
 ## 完整文件结构示例
 

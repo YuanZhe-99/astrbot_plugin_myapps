@@ -5,6 +5,7 @@ AstrBot Plugin: astrbot_plugin_myapps
 所有设定通过 AstrBot WebUI 配置界面管理
 """
 import base64
+from datetime import datetime
 import aiohttp
 from astrbot.api import star, llm_tool, AstrBotConfig
 from astrbot.api.event import AstrMessageEvent, filter
@@ -167,7 +168,16 @@ class Main(star.Star):
         for a in data:
             ep = a.get("totalEpisodes")
             nxt = a.get("nextUnwatchedEpisode")
-            status = "✅已完结" if a.get("isCompleted") else (f"▶第{nxt}集待看" if nxt else "▶进行中")
+            if a.get("isCompleted"):
+                status = "✅已完结"
+            elif nxt:
+                air = a.get("nextEpisodeAirDate")
+                if air and air > datetime.now().isoformat():
+                    status = f"▶第{nxt}集等待更新"
+                else:
+                    status = f"▶第{nxt}集待看"
+            else:
+                status = "🚫已弃番"
             lines.append(f"· {a.get('title','?')}（{ep or '?'}集） {status}")
         return "\n".join(lines)
 
