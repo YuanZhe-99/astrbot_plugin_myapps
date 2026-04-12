@@ -60,6 +60,15 @@ class Main(star.Star):
         self.context = context
         self.config = config
 
+    def _check_sender(self, event: AstrMessageEvent) -> str | None:
+        allowed = self.config.get("allowed_sender_ids", [])
+        if not allowed:
+            return None
+        sender_id = event.get_sender_id()
+        if sender_id not in allowed:
+            return "⛔ 你没有权限使用此功能。"
+        return None
+
     @property
     def _anime_base(self) -> str:
         return (self.config.get("myanime_base") or "http://localhost:7788").rstrip("/")
@@ -108,6 +117,18 @@ class Main(star.Star):
     def _day_readonly(self) -> bool:
         return self.config.get("myday_readonly", False)
 
+    @property
+    def _day_todo_enabled(self) -> bool:
+        return self._day_enabled and self.config.get("myday_todo_enabled", True)
+
+    @property
+    def _day_finance_enabled(self) -> bool:
+        return self._day_enabled and self.config.get("myday_finance_enabled", True)
+
+    @property
+    def _day_weight_enabled(self) -> bool:
+        return self._day_enabled and self.config.get("myday_weight_enabled", True)
+
     # ────────────────────────────────────────
     #  MyAnime — 番剧管理
     # ────────────────────────────────────────
@@ -119,6 +140,7 @@ class Main(star.Star):
         Args:
             title(string): 番剧名称，中文或日文均可
         """
+        if (deny := self._check_sender(event)): return deny
         if not self._anime_enabled:
             return "MyAnime 功能已关闭。"
         if self._anime_readonly:
@@ -156,6 +178,7 @@ class Main(star.Star):
         Args:
             season(string): 季度筛选，可选值：current（当前季度，默认）/ 2026Q2这样的格式指定季度 / unassigned（未分配季度）/ all（全部，随机返40个）
         """
+        if (deny := self._check_sender(event)): return deny
         if not self._anime_enabled:
             return "MyAnime 功能已关闭。"
         if not await _check(self._anime_base, "MyAnime", auth=self._anime_auth):
@@ -187,6 +210,7 @@ class Main(star.Star):
 
         Args:
         """
+        if (deny := self._check_sender(event)): return deny
         if not self._anime_enabled:
             return "MyAnime 功能已关闭。"
         if not await _check(self._anime_base, "MyAnime", auth=self._anime_auth):
@@ -211,6 +235,7 @@ class Main(star.Star):
         Args:
             season(string): 季度筛选，可选值：current（当前季度，默认）/ 2026Q2这样的格式指定季度 / unassigned（未分配季度）/ all（全部，随机返40个）
         """
+        if (deny := self._check_sender(event)): return deny
         if not self._anime_enabled:
             return "MyAnime 功能已关闭。"
         if not await _check(self._anime_base, "MyAnime", auth=self._anime_auth):
@@ -243,6 +268,7 @@ class Main(star.Star):
         Args:
             category(string): 设备类别，可选值：all/desktop/laptop/phone/tablet/headphone/watch/router/gameConsole/vps/devBoard/other，不筛选时传 all
         """
+        if (deny := self._check_sender(event)): return deny
         if not self._device_enabled:
             return "MyDevice 功能已关闭。"
         if not await _check(self._device_base, "MyDevice", auth=self._device_auth):
@@ -274,6 +300,7 @@ class Main(star.Star):
         Args:
             keyword(string): 搜索关键词，例如设备名称、品牌、型号
         """
+        if (deny := self._check_sender(event)): return deny
         if not self._device_enabled:
             return "MyDevice 功能已关闭。"
         if not await _check(self._device_base, "MyDevice", auth=self._device_auth):
@@ -310,6 +337,7 @@ class Main(star.Star):
             os(string): 操作系统，如 macOS 15，不知道传空字符串
             notes(string): 备注，没有传空字符串
         """
+        if (deny := self._check_sender(event)): return deny
         if not self._device_enabled:
             return "MyDevice 功能已关闭。"
         if self._device_readonly:
@@ -335,6 +363,7 @@ class Main(star.Star):
 
         Args:
         """
+        if (deny := self._check_sender(event)): return deny
         if not self._device_enabled:
             return "MyDevice 功能已关闭。"
         if not await _check(self._device_base, "MyDevice", auth=self._device_auth):
@@ -369,8 +398,9 @@ class Main(star.Star):
         Args:
             date(string): 日期，格式 yyyy-MM-dd，查询今天时传今天的日期
         """
-        if not self._day_enabled:
-            return "MyDay 功能已关闭。"
+        if (deny := self._check_sender(event)): return deny
+        if not self._day_todo_enabled:
+            return "MyDay 待办功能已关闭。"
         if not await _check(self._day_base, "MyDay", auth=self._day_auth):
             return "MyDay 客户端未运行，请先启动。"
         path = f"/todo/list?date={date}" if date else "/todo/list"
@@ -404,8 +434,9 @@ class Main(star.Star):
             task_type(string): 任务类型：daily（每日循环）/ routineOnce（一次性例行）/ workOnce（一次性工作）
             due_date(string): 截止日期，格式 yyyy-MM-dd，没有则传空字符串
         """
-        if not self._day_enabled:
-            return "MyDay 功能已关闭。"
+        if (deny := self._check_sender(event)): return deny
+        if not self._day_todo_enabled:
+            return "MyDay 待办功能已关闭。"
         if self._day_readonly:
             return "MyDay 处于只读模式，无法添加任务。"
         if not await _check(self._day_base, "MyDay", auth=self._day_auth):
@@ -426,8 +457,9 @@ class Main(star.Star):
 
         Args:
         """
-        if not self._day_enabled:
-            return "MyDay 功能已关闭。"
+        if (deny := self._check_sender(event)): return deny
+        if not self._day_todo_enabled:
+            return "MyDay 待办功能已关闭。"
         if not await _check(self._day_base, "MyDay", auth=self._day_auth):
             return "MyDay 客户端未运行。"
         data = await _get(self._day_base, "/todo/stats", auth=self._day_auth)
@@ -449,8 +481,9 @@ class Main(star.Star):
         Args:
             month(string): 月份，格式 yyyy-MM，查询当月时传当月，如 2026-04
         """
-        if not self._day_enabled:
-            return "MyDay 功能已关闭。"
+        if (deny := self._check_sender(event)): return deny
+        if not self._day_finance_enabled:
+            return "MyDay 财务功能已关闭。"
         if not await _check(self._day_base, "MyDay", auth=self._day_auth):
             return "MyDay 客户端未运行。"
         path = f"/finance/summary?month={month}" if month else "/finance/summary"
@@ -485,8 +518,9 @@ class Main(star.Star):
             note(string): 备注，如"午饭"、"工资"，没有传空字符串
             account_name(string): 账户名称关键词，没有传空字符串，将使用默认账户
         """
-        if not self._day_enabled:
-            return "MyDay 功能已关闭。"
+        if (deny := self._check_sender(event)): return deny
+        if not self._day_finance_enabled:
+            return "MyDay 财务功能已关闭。"
         if self._day_readonly:
             return "MyDay 处于只读模式，无法记账。"
         if not await _check(self._day_base, "MyDay", auth=self._day_auth):
@@ -525,8 +559,9 @@ class Main(star.Star):
 
         Args:
         """
-        if not self._day_enabled:
-            return "MyDay 功能已关闭。"
+        if (deny := self._check_sender(event)): return deny
+        if not self._day_finance_enabled:
+            return "MyDay 财务功能已关闭。"
         if not await _check(self._day_base, "MyDay", auth=self._day_auth):
             return "MyDay 客户端未运行。"
         data = await _get(self._day_base, "/finance/subscriptions", auth=self._day_auth)
@@ -546,8 +581,9 @@ class Main(star.Star):
         Args:
             weight(string): 体重数值，单位 kg，如 "65.5"
         """
-        if not self._day_enabled:
-            return "MyDay 功能已关闭。"
+        if (deny := self._check_sender(event)): return deny
+        if not self._day_weight_enabled:
+            return "MyDay 体重功能已关闭。"
         if self._day_readonly:
             return "MyDay 处于只读模式，无法记录体重。"
         if not await _check(self._day_base, "MyDay", auth=self._day_auth):
@@ -567,8 +603,9 @@ class Main(star.Star):
 
         Args:
         """
-        if not self._day_enabled:
-            return "MyDay 功能已关闭。"
+        if (deny := self._check_sender(event)): return deny
+        if not self._day_weight_enabled:
+            return "MyDay 体重功能已关闭。"
         if not await _check(self._day_base, "MyDay", auth=self._day_auth):
             return "MyDay 客户端未运行。"
         data = await _get(self._day_base, "/weight/stats", auth=self._day_auth)
@@ -592,6 +629,9 @@ class Main(star.Star):
     @filter.command("myapps")
     async def cmd_myapps(self, event: AstrMessageEvent):
         """显示所有支持的 App 功能列表"""
+        if (deny := self._check_sender(event)):
+            yield event.plain_result(deny)
+            return
         lines = [
             "🗂️  MyApps 集成插件\n",
             "📺 MyAnime（番剧）",

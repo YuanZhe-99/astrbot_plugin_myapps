@@ -1,5 +1,12 @@
 # 更新日志
 
+## v0.3.0
+
+### 新增
+
+1. **隐私保护**：新增 `allowed_sender_ids` 配置项（列表类型），可指定允许使用本插件的用户 ID，留空则不限制。所有 LLM 工具和指令均受此限制。
+2. **MyDay 模块开关**：新增 `myday_todo_enabled`、`myday_finance_enabled`、`myday_weight_enabled` 配置项，可单独开关 MyDay 的待办、财务、体重模块。
+
 ## v0.2.3
 
 ### 修复

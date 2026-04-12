@@ -1,4 +1,10 @@
 {
+  "allowed_sender_ids": {
+    "description": "允许使用的发送者 ID 列表",
+    "type": "list",
+    "default": [],
+    "hint": "填写允许使用本插件的用户 ID（平台用户 ID），留空则不限制。多个 ID 之间用列表管理。"
+  },
   "myanime_enabled": {
     "description": "启用 MyAnime 功能",
     "type": "bool",
@@ -70,6 +76,24 @@
     "type": "bool",
     "default": false,
     "hint": "开启后只允许查询，禁止添加/修改/记账操作"
+  },
+  "myday_todo_enabled": {
+    "description": "启用 MyDay 待办功能",
+    "type": "bool",
+    "default": true,
+    "hint": "关闭后 Agent 不会尝试访问 MyDay 待办模块"
+  },
+  "myday_finance_enabled": {
+    "description": "启用 MyDay 财务功能",
+    "type": "bool",
+    "default": true,
+    "hint": "关闭后 Agent 不会尝试访问 MyDay 财务模块"
+  },
+  "myday_weight_enabled": {
+    "description": "启用 MyDay 体重功能",
+    "type": "bool",
+    "default": true,
+    "hint": "关闭后 Agent 不会尝试访问 MyDay 体重模块"
   },
   "myday_base": {
     "description": "MyDay API 地址",
