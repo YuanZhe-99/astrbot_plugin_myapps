@@ -1,0 +1,62 @@
+{
+  "myanime_base": {
+    "description": "MyAnime API 地址",
+    "type": "string",
+    "default": "http://localhost:7788",
+    "hint": "MyAnime 客户端的 API 地址，格式 http://host:port"
+  },
+  "myanime_username": {
+    "description": "MyAnime 用户名",
+    "type": "string",
+    "default": "",
+    "hint": "如果 MyAnime 开启了 Basic Auth，请填写用户名"
+  },
+  "myanime_password": {
+    "description": "MyAnime 密码",
+    "type": "string",
+    "default": "",
+    "hint": "如果 MyAnime 开启了 Basic Auth，请填写密码"
+  },
+  "mydevice_base": {
+    "description": "MyDevice API 地址",
+    "type": "string",
+    "default": "http://localhost:7789",
+    "hint": "MyDevice 客户端的 API 地址，格式 http://host:port"
+  },
+  "mydevice_username": {
+    "description": "MyDevice 用户名",
+    "type": "string",
+    "default": "",
+    "hint": "如果 MyDevice 开启了 Basic Auth，请填写用户名"
+  },
+  "mydevice_password": {
+    "description": "MyDevice 密码",
+    "type": "string",
+    "default": "",
+    "hint": "如果 MyDevice 开启了 Basic Auth，请填写密码"
+  },
+  "myday_base": {
+    "description": "MyDay API 地址",
+    "type": "string",
+    "default": "http://localhost:7790",
+    "hint": "MyDay 客户端的 API 地址，格式 http://host:port"
+  },
+  "myday_username": {
+    "description": "MyDay 用户名",
+    "type": "string",
+    "default": "",
+    "hint": "如果 MyDay 开启了 Basic Auth，请填写用户名"
+  },
+  "myday_password": {
+    "description": "MyDay 密码",
+    "type": "string",
+    "default": "",
+    "hint": "如果 MyDay 开启了 Basic Auth，请填写密码"
+  },
+  "http_timeout": {
+    "description": "HTTP 请求超时（秒）",
+    "type": "int",
+    "default": 12,
+    "hint": "API 请求超时时间，单位秒"
+  }
+}

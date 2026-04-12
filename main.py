@@ -1,47 +1,45 @@
 """
 AstrBot Plugin: astrbot_plugin_myapps
-集成 MyAnime (port 7788)、MyDevice (port 7789)、MyDay (port 7790)
+集成 MyAnime、MyDevice、MyDay 三个 Flutter 个人管理 App
 支持 LLM Function Calling 自然语言交互 + 传统指令
+所有设定通过 AstrBot WebUI 配置界面管理
 """
+import base64
 import aiohttp
-from astrbot.api import star, llm_tool
+from astrbot.api import star, llm_tool, AstrBotConfig
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.core import logger
 
-# ── 各 App 的本地 API 地址 ──
-MYANIME_BASE  = "http://localhost:7788"
-MYDEVICE_BASE = "http://localhost:7789"
-MYDAY_BASE    = "http://localhost:7790"
 
-_TIMEOUT = aiohttp.ClientTimeout(total=12)
+def _make_auth_header(username: str, password: str) -> dict:
+    if username and password:
+        cred = base64.b64encode(f"{username}:{password}".encode()).decode()
+        return {"Authorization": f"Basic {cred}"}
+    return {}
 
 
-# ════════════════════════════════════════════
-#  HTTP 工具函数
-# ════════════════════════════════════════════
-
-async def _get(base: str, path: str):
+async def _get(base: str, path: str, *, auth: dict | None = None):
     try:
-        async with aiohttp.ClientSession(timeout=_TIMEOUT) as s:
-            async with s.get(f"{base}{path}") as r:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"{base}{path}", headers=auth or {}) as r:
                 return await r.json() if r.status == 200 else None
     except Exception as e:
         logger.error(f"[MyApps] GET {base}{path}: {e}")
         return None
 
 
-async def _post(base: str, path: str, data: dict):
+async def _post(base: str, path: str, data: dict, *, auth: dict | None = None):
     try:
-        async with aiohttp.ClientSession(timeout=_TIMEOUT) as s:
-            async with s.post(f"{base}{path}", json=data) as r:
+        async with aiohttp.ClientSession() as s:
+            async with s.post(f"{base}{path}", json=data, headers=auth or {}) as r:
                 return await r.json() if r.status == 200 else None
     except Exception as e:
         logger.error(f"[MyApps] POST {base}{path}: {e}")
         return None
 
 
-async def _check(base: str, name: str) -> bool:
-    r = await _get(base, "/ping")
+async def _check(base: str, name: str, *, auth: dict | None = None) -> bool:
+    r = await _get(base, "/ping", auth=auth)
     if not (r and r.get("status") == "ok"):
         logger.warning(f"[MyApps] {name} 客户端未响应 ({base})")
         return False
@@ -57,8 +55,33 @@ def _dow(day) -> str:
 # ════════════════════════════════════════════
 
 class Main(star.Star):
-    def __init__(self, context: star.Context) -> None:
+    def __init__(self, context: star.Context, config: AstrBotConfig) -> None:
         self.context = context
+        self.config = config
+
+    @property
+    def _anime_base(self) -> str:
+        return (self.config.get("myanime_base") or "http://localhost:7788").rstrip("/")
+
+    @property
+    def _anime_auth(self) -> dict:
+        return _make_auth_header(self.config.get("myanime_username", ""), self.config.get("myanime_password", ""))
+
+    @property
+    def _device_base(self) -> str:
+        return (self.config.get("mydevice_base") or "http://localhost:7789").rstrip("/")
+
+    @property
+    def _device_auth(self) -> dict:
+        return _make_auth_header(self.config.get("mydevice_username", ""), self.config.get("mydevice_password", ""))
+
+    @property
+    def _day_base(self) -> str:
+        return (self.config.get("myday_base") or "http://localhost:7790").rstrip("/")
+
+    @property
+    def _day_auth(self) -> dict:
+        return _make_auth_header(self.config.get("myday_username", ""), self.config.get("myday_password", ""))
 
     # ────────────────────────────────────────
     #  MyAnime — 番剧管理
@@ -71,14 +94,14 @@ class Main(star.Star):
         Args:
             title(string): 番剧名称，中文或日文均可
         """
-        if not await _check(MYANIME_BASE, "MyAnime"):
+        if not await _check(self._anime_base, "MyAnime", auth=self._anime_auth):
             return "MyAnime 客户端未运行，请先启动。"
-        results = await _post(MYANIME_BASE, "/anime/search", {"query": title})
+        results = await _post(self._anime_base, "/anime/search", {"query": title}, auth=self._anime_auth)
         if not results:
             return f"未找到「{title}」，请检查名称是否正确。"
         best = results[0]
         t = best.get("title") or best.get("titleJa") or title
-        r = await _post(MYANIME_BASE, "/anime/add", {
+        r = await _post(self._anime_base, "/anime/add", {
             "title": best.get("title"),
             "titleJa": best.get("titleJa"),
             "episodes": best.get("episodes"),
@@ -86,7 +109,7 @@ class Main(star.Star):
             "airDayOfWeek": best.get("airDayOfWeek"),
             "airTime": best.get("airTime"),
             "sourceUrl": best.get("sourceUrl"),
-        })
+        }, auth=self._anime_auth)
         if r and r.get("success"):
             ep = best.get("episodes")
             dow = _dow(best.get("airDayOfWeek"))
@@ -103,9 +126,9 @@ class Main(star.Star):
 
         Args:
         """
-        if not await _check(MYANIME_BASE, "MyAnime"):
+        if not await _check(self._anime_base, "MyAnime", auth=self._anime_auth):
             return "MyAnime 客户端未运行。"
-        data = await _get(MYANIME_BASE, "/anime/list")
+        data = await _get(self._anime_base, "/anime/list", auth=self._anime_auth)
         if not data:
             return "追番列表为空。"
         lines = [f"共追了 {len(data)} 部番剧："]
@@ -122,9 +145,9 @@ class Main(star.Star):
 
         Args:
         """
-        if not await _check(MYANIME_BASE, "MyAnime"):
+        if not await _check(self._anime_base, "MyAnime", auth=self._anime_auth):
             return "MyAnime 客户端未运行。"
-        data = await _get(MYANIME_BASE, "/anime/unwatched")
+        data = await _get(self._anime_base, "/anime/unwatched", auth=self._anime_auth)
         if not data:
             return "🎉 所有番剧都看完了！"
         lines = [f"有 {len(data)} 部番剧待看："]
@@ -143,9 +166,9 @@ class Main(star.Star):
 
         Args:
         """
-        if not await _check(MYANIME_BASE, "MyAnime"):
+        if not await _check(self._anime_base, "MyAnime", auth=self._anime_auth):
             return "MyAnime 客户端未运行。"
-        data = await _get(MYANIME_BASE, "/anime/history")
+        data = await _get(self._anime_base, "/anime/history", auth=self._anime_auth)
         if not data:
             return "还没有观看历史。"
         done = [a for a in data if a.get("isCompleted")]
@@ -172,10 +195,10 @@ class Main(star.Star):
         Args:
             category(string): 设备类别，可选值：all/desktop/laptop/phone/tablet/headphone/watch/router/gameConsole/vps/devBoard/other，不筛选时传 all
         """
-        if not await _check(MYDEVICE_BASE, "MyDevice"):
+        if not await _check(self._device_base, "MyDevice", auth=self._device_auth):
             return "MyDevice 客户端未运行，请先启动。"
         path = "/device/list" if category in ("all", "") else f"/device/list?category={category}"
-        data = await _get(MYDEVICE_BASE, path)
+        data = await _get(self._device_base, path, auth=self._device_auth)
         if data is None:
             return "获取设备列表失败。"
         if not data:
@@ -201,9 +224,9 @@ class Main(star.Star):
         Args:
             keyword(string): 搜索关键词，例如设备名称、品牌、型号
         """
-        if not await _check(MYDEVICE_BASE, "MyDevice"):
+        if not await _check(self._device_base, "MyDevice", auth=self._device_auth):
             return "MyDevice 客户端未运行。"
-        data = await _get(MYDEVICE_BASE, f"/device/search?q={keyword}")
+        data = await _get(self._device_base, f"/device/search?q={keyword}", auth=self._device_auth)
         if not data:
             return f"没有找到包含「{keyword}」的设备。"
         lines = [f"找到 {len(data)} 台匹配设备："]
@@ -235,7 +258,7 @@ class Main(star.Star):
             os(string): 操作系统，如 macOS 15，不知道传空字符串
             notes(string): 备注，没有传空字符串
         """
-        if not await _check(MYDEVICE_BASE, "MyDevice"):
+        if not await _check(self._device_base, "MyDevice", auth=self._device_auth):
             return "MyDevice 客户端未运行。"
         payload = {
             "name": name,
@@ -245,7 +268,7 @@ class Main(star.Star):
             "os": os or None,
             "notes": notes or None,
         }
-        r = await _post(MYDEVICE_BASE, "/device/add", payload)
+        r = await _post(self._device_base, "/device/add", payload, auth=self._device_auth)
         if r and r.get("success"):
             return f"已成功添加设备「{name}」（{category}）到 MyDevice！"
         return f"添加设备「{name}」失败，请稍后再试。"
@@ -256,9 +279,9 @@ class Main(star.Star):
 
         Args:
         """
-        if not await _check(MYDEVICE_BASE, "MyDevice"):
+        if not await _check(self._device_base, "MyDevice", auth=self._device_auth):
             return "MyDevice 客户端未运行。"
-        data = await _get(MYDEVICE_BASE, "/device/stats")
+        data = await _get(self._device_base, "/device/stats", auth=self._device_auth)
         if not data:
             return "获取设备统计失败。"
         total = data.get("total", 0)
@@ -288,10 +311,10 @@ class Main(star.Star):
         Args:
             date(string): 日期，格式 yyyy-MM-dd，查询今天时传今天的日期
         """
-        if not await _check(MYDAY_BASE, "MyDay"):
+        if not await _check(self._day_base, "MyDay", auth=self._day_auth):
             return "MyDay 客户端未运行，请先启动。"
         path = f"/todo/list?date={date}" if date else "/todo/list"
-        data = await _get(MYDAY_BASE, path)
+        data = await _get(self._day_base, path, auth=self._day_auth)
         if data is None:
             return "获取待办列表失败。"
         if not data:
@@ -321,14 +344,14 @@ class Main(star.Star):
             task_type(string): 任务类型：daily（每日循环）/ routineOnce（一次性例行）/ workOnce（一次性工作）
             due_date(string): 截止日期，格式 yyyy-MM-dd，没有则传空字符串
         """
-        if not await _check(MYDAY_BASE, "MyDay"):
+        if not await _check(self._day_base, "MyDay", auth=self._day_auth):
             return "MyDay 客户端未运行。"
         payload = {
             "title": title,
             "type": task_type or "workOnce",
             "dueDate": due_date or None,
         }
-        r = await _post(MYDAY_BASE, "/todo/add", payload)
+        r = await _post(self._day_base, "/todo/add", payload, auth=self._day_auth)
         if r and r.get("success"):
             return f"已添加待办任务「{title}」！"
         return f"添加任务「{title}」失败。"
@@ -339,9 +362,9 @@ class Main(star.Star):
 
         Args:
         """
-        if not await _check(MYDAY_BASE, "MyDay"):
+        if not await _check(self._day_base, "MyDay", auth=self._day_auth):
             return "MyDay 客户端未运行。"
-        data = await _get(MYDAY_BASE, "/todo/stats")
+        data = await _get(self._day_base, "/todo/stats", auth=self._day_auth)
         if not data:
             return "获取统计失败。"
         total = data.get("today_total", 0)
@@ -360,10 +383,10 @@ class Main(star.Star):
         Args:
             month(string): 月份，格式 yyyy-MM，查询当月时传当月，如 2026-04
         """
-        if not await _check(MYDAY_BASE, "MyDay"):
+        if not await _check(self._day_base, "MyDay", auth=self._day_auth):
             return "MyDay 客户端未运行。"
         path = f"/finance/summary?month={month}" if month else "/finance/summary"
-        data = await _get(MYDAY_BASE, path)
+        data = await _get(self._day_base, path, auth=self._day_auth)
         if not data:
             return "获取财务摘要失败。"
         income = data.get("income", 0)
@@ -394,10 +417,10 @@ class Main(star.Star):
             note(string): 备注，如"午饭"、"工资"，没有传空字符串
             account_name(string): 账户名称关键词，没有传空字符串，将使用默认账户
         """
-        if not await _check(MYDAY_BASE, "MyDay"):
+        if not await _check(self._day_base, "MyDay", auth=self._day_auth):
             return "MyDay 客户端未运行。"
         # 先获取账户列表匹配 accountId
-        summary = await _get(MYDAY_BASE, "/finance/summary")
+        summary = await _get(self._day_base, "/finance/summary", auth=self._day_auth)
         accounts = (summary or {}).get("accounts", [])
         account_id = None
         if account_name and accounts:
@@ -413,12 +436,12 @@ class Main(star.Star):
             amt = float(amount)
         except Exception:
             return f"金额格式错误：{amount}"
-        r = await _post(MYDAY_BASE, "/finance/add_transaction", {
+        r = await _post(self._day_base, "/finance/add_transaction", {
             "type": ttype,
             "amount": amt,
             "accountId": account_id,
             "note": note or "",
-        })
+        }, auth=self._day_auth)
         if r and r.get("success"):
             type_cn = {"expense":"支出","income":"收入","transfer":"转账"}.get(ttype, ttype)
             return f"已记录{type_cn}：{amt:.2f} 元，备注「{note or '无'}」。"
@@ -430,9 +453,9 @@ class Main(star.Star):
 
         Args:
         """
-        if not await _check(MYDAY_BASE, "MyDay"):
+        if not await _check(self._day_base, "MyDay", auth=self._day_auth):
             return "MyDay 客户端未运行。"
-        data = await _get(MYDAY_BASE, "/finance/subscriptions")
+        data = await _get(self._day_base, "/finance/subscriptions", auth=self._day_auth)
         if not data:
             return "没有活跃的订阅服务。"
         lines = [f"📦 活跃订阅（共 {len(data)} 项）"]
@@ -449,13 +472,13 @@ class Main(star.Star):
         Args:
             weight(string): 体重数值，单位 kg，如 "65.5"
         """
-        if not await _check(MYDAY_BASE, "MyDay"):
+        if not await _check(self._day_base, "MyDay", auth=self._day_auth):
             return "MyDay 客户端未运行。"
         try:
             w = float(weight)
         except Exception:
             return f"体重格式错误：{weight}"
-        r = await _post(MYDAY_BASE, "/weight/add", {"weight": w})
+        r = await _post(self._day_base, "/weight/add", {"weight": w}, auth=self._day_auth)
         if r and r.get("success"):
             return f"已记录体重 {w} kg！"
         return "记录体重失败。"
@@ -466,9 +489,9 @@ class Main(star.Star):
 
         Args:
         """
-        if not await _check(MYDAY_BASE, "MyDay"):
+        if not await _check(self._day_base, "MyDay", auth=self._day_auth):
             return "MyDay 客户端未运行。"
-        data = await _get(MYDAY_BASE, "/weight/stats")
+        data = await _get(self._day_base, "/weight/stats", auth=self._day_auth)
         if not data:
             return "获取体重统计失败。"
         latest = data.get("latest")

@@ -44,7 +44,7 @@ AstrBot (Python 插件)
 
 | App | 端口 | 参考 Prompt |
 |-----|------|-------------|
-| MyAnime | 7788 | [已在上一版本完成] |
+| MyAnime | 7788 | 见 `MyAnime_API_Server_Prompt.md` |
 | MyDevice | 7789 | 见 `MyDevice_API_Server_Prompt.md` |
 | MyDay | 7790 | 见 `MyDay_API_Server_Prompt.md` |
 
