@@ -15,9 +15,13 @@
 - 新增 pubspec.yaml 依赖：
     shelf: ^1.4.0
     shelf_router: ^1.1.0
+    launch_at_startup: ^0.5.1
+    package_info_plus（如尚未添加）
 - 仅在 Windows / macOS / Linux 桌面端启动（用 Platform.isWindows 等判断）
-- 监听 localhost（InternetAddress.loopbackIPv4），端口 7788，支持设置界面修改端口，支持设置用户名和密码进行 Basic Auth 认证，默认无认证（非localhost访问时强制认证）
-- 增加 App 后台运行能力和自启动能力，参考 MyDay 的后台留存实现
+- 监听地址默认 localhost，端口 7788，均可在设置界面中修改
+- 支持设置用户名和密码进行 Basic Auth 认证，默认无认证（非 localhost 访问时强制认证）
+- 增加 App 后台运行能力（tray_manager + window_manager 系统托盘后台留存）
+- 增加桌面自启动（launch_at_startup），在设置页添加开关
 - 新建文件：lib/shared/services/local_api_server.dart
 - 在 lib/main.dart 的 main() 函数中，WidgetsFlutterBinding.ensureInitialized() 之后、
   runApp() 之前添加以下调用（仅桌面端）：
@@ -148,11 +152,63 @@ EpisodeStatus 枚举：unwatched, watched, skippedThisWeek
 4. 添加 CORS 中间件，响应头包含：
    Access-Control-Allow-Origin: *
    Access-Control-Allow-Methods: GET, POST, OPTIONS
-   Access-Control-Allow-Headers: Content-Type
+   Access-Control-Allow-Headers: Content-Type, Authorization
 5. 捕获所有异常，返回 500 {"error": "internal error: <message>"}
 6. AnimeStorage 是纯静态类，可直接调用，不需要实例化
 7. 服务器实例存为静态变量 static HttpServer? _server，提供 start() 和 stop() 方法
-8. 端口号定义为常量 static const int port = 7788
+8. 端口号从配置读取，默认 7788
+
+## 已踩坑记录（必须遵守）
+
+### InternetAddress 地址绑定
+- **绝对不能**使用 `InternetAddress('localhost', type: InternetAddressType.any)`
+  — 'localhost' 是主机名不是数字地址，`InternetAddress` 构造函数会抛异常
+- 正确做法：
+  ```dart
+  final InternetAddress bindAddress;
+  if (addr == '0.0.0.0') {
+    bindAddress = InternetAddress.anyIPv4;
+  } else if (addr == 'localhost' || addr == '127.0.0.1') {
+    bindAddress = InternetAddress.loopbackIPv4;
+  } else {
+    bindAddress = InternetAddress(addr, type: InternetAddressType.any);
+  }
+  ```
+
+### 非 localhost 监听必须设置凭据
+- 当 listenAddress 为 0.0.0.0 或非 localhost/127.0.0.1 时，
+  如果未设置 username + password，服务器应**拒绝启动**
+- 设置 `_lastError = 'credentials_required'` 并 return，不启动服务器
+- UI 设置页应检查 `LocalApiServer.lastError`，红色字体显示错误原因
+
+### 错误状态暴露给 UI
+- LocalApiServer 需要 `static String? _lastError` 和 `static String? get lastError`
+- start() 失败时 catch 中设置 `_lastError = e.toString()`
+- 设置页 subtitle 根据 isRunning / lastError 显示不同状态文字
+
+### macOS 平台特殊要求
+- **Release.entitlements 必须包含** `com.apple.security.network.server` 权限
+  （DebugProfile.entitlements 通常已有，Release.entitlements 容易遗漏）
+  如缺失，macOS Release 构建的 sandbox 会阻止 socket bind，导致服务器静默失败
+- **launch_at_startup 需要 macOS 平台配置：**
+  1. 在 `macos/Runner/MainFlutterWindow.swift` 中添加：
+     - `import LaunchAtLogin`
+     - FlutterMethodChannel(name: "launch_at_startup") 处理
+       `launchAtStartupIsEnabled` 和 `launchAtStartupSetEnabled` 方法
+  2. 在 `macos/Runner.xcodeproj/project.pbxproj` 中添加 Swift Package 依赖：
+     - XCRemoteSwiftPackageReference: `https://github.com/sindresorhus/LaunchAtLogin-Modern`
+     - minimumVersion: 1.1.0, kind: upToNextMajorVersion
+     - Runner target 添加 packageProductDependencies
+  3. MACOSX_DEPLOYMENT_TARGET 须 >= 13.0（LaunchAtLogin-Modern 要求 macOS 13+）
+     pbxproj 中所有 3 处 MACOSX_DEPLOYMENT_TARGET（Debug/Release/Profile）都要改
+- **关闭到托盘（close-to-tray）：**
+  - `AppDelegate.swift` 的 `applicationShouldTerminateAfterLastWindowClosed` 必须返回 `false`
+    （默认返回 `true`，会导致关闭窗口时整个应用退出而非隐藏到托盘）
+- **Dock 图标隐藏/显示：**
+  - 最小化/关闭到托盘时隐藏 Dock 图标，从托盘恢复时重新显示
+  - 在 `AppDelegate.swift` 的 `applicationDidFinishLaunching` 中注册 MethodChannel（如 `com.yuanzhe.my_anime/dock`）
+  - 处理 `setDockIconVisible` 方法：`NSApp.setActivationPolicy(.accessory)` 隐藏、`.regular` 显示
+  - Flutter 端 `tray_service.dart` 在窗口隐藏/显示时调用该 channel
 
 ## 完整文件结构示例
 
@@ -168,11 +224,24 @@ lib/shared/services/local_api_server.dart 结构：
   import '../../features/anime/services/anime_storage.dart';
 
   class LocalApiServer {
-    static const int port = 7788;
     static HttpServer? _server;
+    static int _port = 7788;
+    static String _listenAddress = 'localhost';
+    static bool _enabled = false;
+    static String? _username;
+    static String? _password;
+    static String? _lastError;
+
+    static int get port => _port;
+    static String get listenAddress => _listenAddress;
+    static bool get enabled => _enabled;
+    static bool get isRunning => _server != null;
+    static String? get lastError => _lastError;
 
     static Future<void> start() async { ... }
     static Future<void> stop() async { ... }
+    static Future<void> restart() async { ... }
+    static Future<void> loadConfig() async { ... }
 
     // 路由处理方法（GET /ping, POST /anime/search, POST /anime/add,
     //              GET /anime/list, GET /anime/unwatched, GET /anime/history）
