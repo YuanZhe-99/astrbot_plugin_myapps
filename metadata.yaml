@@ -1,5 +1,5 @@
 name: astrbot_plugin_myapps
 desc: "集成 MyAnime/MyDevice/MyDay 三个 Flutter 个人管理 App，支持自然语言交互"
-version: "0.2.2"
+version: "0.2.3"
 author: YuanZhe-99
 repo: "https://github.com/YuanZhe-99/astrbot_plugin_myapps"

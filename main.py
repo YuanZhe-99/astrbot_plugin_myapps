@@ -5,7 +5,7 @@ AstrBot Plugin: astrbot_plugin_myapps
 所有设定通过 AstrBot WebUI 配置界面管理
 """
 import base64
-from datetime import datetime
+from datetime import datetime, timezone
 import aiohttp
 from astrbot.api import star, llm_tool, AstrBotConfig
 from astrbot.api.event import AstrMessageEvent, filter
@@ -172,7 +172,7 @@ class Main(star.Star):
                 status = "✅已完结"
             elif nxt:
                 air = a.get("nextEpisodeAirDate")
-                if air and air > datetime.now().isoformat():
+                if air and air > datetime.now(timezone.utc).isoformat():
                     status = f"▶第{nxt}集等待更新"
                 else:
                     status = f"▶第{nxt}集待看"
