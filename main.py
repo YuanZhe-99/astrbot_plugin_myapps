@@ -68,6 +68,14 @@ class Main(star.Star):
         return _make_auth_header(self.config.get("myanime_username", ""), self.config.get("myanime_password", ""))
 
     @property
+    def _anime_enabled(self) -> bool:
+        return self.config.get("myanime_enabled", True)
+
+    @property
+    def _anime_readonly(self) -> bool:
+        return self.config.get("myanime_readonly", False)
+
+    @property
     def _device_base(self) -> str:
         return (self.config.get("mydevice_base") or "http://localhost:7789").rstrip("/")
 
@@ -76,12 +84,28 @@ class Main(star.Star):
         return _make_auth_header(self.config.get("mydevice_username", ""), self.config.get("mydevice_password", ""))
 
     @property
+    def _device_enabled(self) -> bool:
+        return self.config.get("mydevice_enabled", True)
+
+    @property
+    def _device_readonly(self) -> bool:
+        return self.config.get("mydevice_readonly", False)
+
+    @property
     def _day_base(self) -> str:
         return (self.config.get("myday_base") or "http://localhost:7790").rstrip("/")
 
     @property
     def _day_auth(self) -> dict:
         return _make_auth_header(self.config.get("myday_username", ""), self.config.get("myday_password", ""))
+
+    @property
+    def _day_enabled(self) -> bool:
+        return self.config.get("myday_enabled", True)
+
+    @property
+    def _day_readonly(self) -> bool:
+        return self.config.get("myday_readonly", False)
 
     # ────────────────────────────────────────
     #  MyAnime — 番剧管理
@@ -94,6 +118,10 @@ class Main(star.Star):
         Args:
             title(string): 番剧名称，中文或日文均可
         """
+        if not self._anime_enabled:
+            return "MyAnime 功能已关闭。"
+        if self._anime_readonly:
+            return "MyAnime 处于只读模式，无法添加番剧。"
         if not await _check(self._anime_base, "MyAnime", auth=self._anime_auth):
             return "MyAnime 客户端未运行，请先启动。"
         results = await _post(self._anime_base, "/anime/search", {"query": title}, auth=self._anime_auth)
@@ -121,14 +149,18 @@ class Main(star.Star):
         return f"添加「{t}」失败，请稍后再试。"
 
     @llm_tool(name="anime_list")
-    async def anime_list(self, event: AstrMessageEvent):
-        """获取 MyAnime 中所有追番列表。当用户询问在追什么番、追番列表时调用。
+    async def anime_list(self, event: AstrMessageEvent, season: str):
+        """获取 MyAnime 中的追番列表。当用户询问在追什么番、追番列表时调用。
 
         Args:
+            season(string): 季度筛选，可选值：current（当前季度，默认）/ 2026Q2这样的格式指定季度 / unassigned（未分配季度）/ all（全部，随机返40个）
         """
+        if not self._anime_enabled:
+            return "MyAnime 功能已关闭。"
         if not await _check(self._anime_base, "MyAnime", auth=self._anime_auth):
             return "MyAnime 客户端未运行。"
-        data = await _get(self._anime_base, "/anime/list", auth=self._anime_auth)
+        s = (season or "current").strip()
+        data = await _get(self._anime_base, f"/anime/list?season={s}", auth=self._anime_auth)
         if not data:
             return "追番列表为空。"
         lines = [f"共追了 {len(data)} 部番剧："]
@@ -141,10 +173,12 @@ class Main(star.Star):
 
     @llm_tool(name="anime_unwatched")
     async def anime_unwatched(self, event: AstrMessageEvent):
-        """查询 MyAnime 中还没看完/有未看集数的番剧。当用户问哪些番没看完、待看番剧时调用。
+        """查询 MyAnime 中已更新但未观看的番剧集数。当用户问哪些番没看完、待看、最近有什么番没看时调用。只返回已经播出但未观看的剧集。
 
         Args:
         """
+        if not self._anime_enabled:
+            return "MyAnime 功能已关闭。"
         if not await _check(self._anime_base, "MyAnime", auth=self._anime_auth):
             return "MyAnime 客户端未运行。"
         data = await _get(self._anime_base, "/anime/unwatched", auth=self._anime_auth)
@@ -161,14 +195,18 @@ class Main(star.Star):
         return "\n".join(lines)
 
     @llm_tool(name="anime_history")
-    async def anime_history(self, event: AstrMessageEvent):
+    async def anime_history(self, event: AstrMessageEvent, season: str):
         """查询 MyAnime 的观看历史和追番进度统计。当用户问看了哪些番、追番历史时调用。
 
         Args:
+            season(string): 季度筛选，可选值：current（当前季度，默认）/ 2026Q2这样的格式指定季度 / unassigned（未分配季度）/ all（全部，随机返40个）
         """
+        if not self._anime_enabled:
+            return "MyAnime 功能已关闭。"
         if not await _check(self._anime_base, "MyAnime", auth=self._anime_auth):
             return "MyAnime 客户端未运行。"
-        data = await _get(self._anime_base, "/anime/history", auth=self._anime_auth)
+        s = (season or "current").strip()
+        data = await _get(self._anime_base, f"/anime/history?season={s}", auth=self._anime_auth)
         if not data:
             return "还没有观看历史。"
         done = [a for a in data if a.get("isCompleted")]
@@ -195,6 +233,8 @@ class Main(star.Star):
         Args:
             category(string): 设备类别，可选值：all/desktop/laptop/phone/tablet/headphone/watch/router/gameConsole/vps/devBoard/other，不筛选时传 all
         """
+        if not self._device_enabled:
+            return "MyDevice 功能已关闭。"
         if not await _check(self._device_base, "MyDevice", auth=self._device_auth):
             return "MyDevice 客户端未运行，请先启动。"
         path = "/device/list" if category in ("all", "") else f"/device/list?category={category}"
@@ -224,6 +264,8 @@ class Main(star.Star):
         Args:
             keyword(string): 搜索关键词，例如设备名称、品牌、型号
         """
+        if not self._device_enabled:
+            return "MyDevice 功能已关闭。"
         if not await _check(self._device_base, "MyDevice", auth=self._device_auth):
             return "MyDevice 客户端未运行。"
         data = await _get(self._device_base, f"/device/search?q={keyword}", auth=self._device_auth)
@@ -258,6 +300,10 @@ class Main(star.Star):
             os(string): 操作系统，如 macOS 15，不知道传空字符串
             notes(string): 备注，没有传空字符串
         """
+        if not self._device_enabled:
+            return "MyDevice 功能已关闭。"
+        if self._device_readonly:
+            return "MyDevice 处于只读模式，无法添加设备。"
         if not await _check(self._device_base, "MyDevice", auth=self._device_auth):
             return "MyDevice 客户端未运行。"
         payload = {
@@ -279,6 +325,8 @@ class Main(star.Star):
 
         Args:
         """
+        if not self._device_enabled:
+            return "MyDevice 功能已关闭。"
         if not await _check(self._device_base, "MyDevice", auth=self._device_auth):
             return "MyDevice 客户端未运行。"
         data = await _get(self._device_base, "/device/stats", auth=self._device_auth)
@@ -311,6 +359,8 @@ class Main(star.Star):
         Args:
             date(string): 日期，格式 yyyy-MM-dd，查询今天时传今天的日期
         """
+        if not self._day_enabled:
+            return "MyDay 功能已关闭。"
         if not await _check(self._day_base, "MyDay", auth=self._day_auth):
             return "MyDay 客户端未运行，请先启动。"
         path = f"/todo/list?date={date}" if date else "/todo/list"
@@ -344,6 +394,10 @@ class Main(star.Star):
             task_type(string): 任务类型：daily（每日循环）/ routineOnce（一次性例行）/ workOnce（一次性工作）
             due_date(string): 截止日期，格式 yyyy-MM-dd，没有则传空字符串
         """
+        if not self._day_enabled:
+            return "MyDay 功能已关闭。"
+        if self._day_readonly:
+            return "MyDay 处于只读模式，无法添加任务。"
         if not await _check(self._day_base, "MyDay", auth=self._day_auth):
             return "MyDay 客户端未运行。"
         payload = {
@@ -362,6 +416,8 @@ class Main(star.Star):
 
         Args:
         """
+        if not self._day_enabled:
+            return "MyDay 功能已关闭。"
         if not await _check(self._day_base, "MyDay", auth=self._day_auth):
             return "MyDay 客户端未运行。"
         data = await _get(self._day_base, "/todo/stats", auth=self._day_auth)
@@ -383,6 +439,8 @@ class Main(star.Star):
         Args:
             month(string): 月份，格式 yyyy-MM，查询当月时传当月，如 2026-04
         """
+        if not self._day_enabled:
+            return "MyDay 功能已关闭。"
         if not await _check(self._day_base, "MyDay", auth=self._day_auth):
             return "MyDay 客户端未运行。"
         path = f"/finance/summary?month={month}" if month else "/finance/summary"
@@ -417,6 +475,10 @@ class Main(star.Star):
             note(string): 备注，如"午饭"、"工资"，没有传空字符串
             account_name(string): 账户名称关键词，没有传空字符串，将使用默认账户
         """
+        if not self._day_enabled:
+            return "MyDay 功能已关闭。"
+        if self._day_readonly:
+            return "MyDay 处于只读模式，无法记账。"
         if not await _check(self._day_base, "MyDay", auth=self._day_auth):
             return "MyDay 客户端未运行。"
         # 先获取账户列表匹配 accountId
@@ -453,6 +515,8 @@ class Main(star.Star):
 
         Args:
         """
+        if not self._day_enabled:
+            return "MyDay 功能已关闭。"
         if not await _check(self._day_base, "MyDay", auth=self._day_auth):
             return "MyDay 客户端未运行。"
         data = await _get(self._day_base, "/finance/subscriptions", auth=self._day_auth)
@@ -472,6 +536,10 @@ class Main(star.Star):
         Args:
             weight(string): 体重数值，单位 kg，如 "65.5"
         """
+        if not self._day_enabled:
+            return "MyDay 功能已关闭。"
+        if self._day_readonly:
+            return "MyDay 处于只读模式，无法记录体重。"
         if not await _check(self._day_base, "MyDay", auth=self._day_auth):
             return "MyDay 客户端未运行。"
         try:
@@ -489,6 +557,8 @@ class Main(star.Star):
 
         Args:
         """
+        if not self._day_enabled:
+            return "MyDay 功能已关闭。"
         if not await _check(self._day_base, "MyDay", auth=self._day_auth):
             return "MyDay 客户端未运行。"
         data = await _get(self._day_base, "/weight/stats", auth=self._day_auth)

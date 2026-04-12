@@ -1,4 +1,16 @@
 {
+  "myanime_enabled": {
+    "description": "启用 MyAnime 功能",
+    "type": "bool",
+    "default": true,
+    "hint": "关闭后 Agent 不会尝试访问 MyAnime"
+  },
+  "myanime_readonly": {
+    "description": "MyAnime 只读模式",
+    "type": "bool",
+    "default": false,
+    "hint": "开启后只允许查询，禁止添加/修改操作"
+  },
   "myanime_base": {
     "description": "MyAnime API 地址",
     "type": "string",
@@ -17,6 +29,18 @@
     "default": "",
     "hint": "如果 MyAnime 开启了 Basic Auth，请填写密码"
   },
+  "mydevice_enabled": {
+    "description": "启用 MyDevice 功能",
+    "type": "bool",
+    "default": true,
+    "hint": "关闭后 Agent 不会尝试访问 MyDevice"
+  },
+  "mydevice_readonly": {
+    "description": "MyDevice 只读模式",
+    "type": "bool",
+    "default": false,
+    "hint": "开启后只允许查询，禁止添加/修改操作"
+  },
   "mydevice_base": {
     "description": "MyDevice API 地址",
     "type": "string",
@@ -34,6 +58,18 @@
     "type": "string",
     "default": "",
     "hint": "如果 MyDevice 开启了 Basic Auth，请填写密码"
+  },
+  "myday_enabled": {
+    "description": "启用 MyDay 功能",
+    "type": "bool",
+    "default": true,
+    "hint": "关闭后 Agent 不会尝试访问 MyDay"
+  },
+  "myday_readonly": {
+    "description": "MyDay 只读模式",
+    "type": "bool",
+    "default": false,
+    "hint": "开启后只允许查询，禁止添加/修改/记账操作"
   },
   "myday_base": {
     "description": "MyDay API 地址",
