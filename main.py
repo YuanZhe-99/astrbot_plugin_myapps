@@ -261,7 +261,7 @@ class Main(star.Star):
             os_ = d.get("os") or ""
             ram = d.get("ram") or ""
             cpu_m = (d.get("cpu") or {}).get("model") or ""
-            details = " | ".join(filter(None, [cpu_m, ram, os_]))
+            details = " | ".join(x for x in [cpu_m, ram, os_] if x)
             lines.append(f"· [{d.get('category','?')}] {d.get('name','?')}{spec}")
             if details:
                 lines.append(f"   {details}")
