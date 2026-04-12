@@ -184,10 +184,25 @@ class Main(star.Star):
         if not await _check(self._anime_base, "MyAnime", auth=self._anime_auth):
             return "MyAnime 客户端未运行。"
         s = (season or "current").strip()
-        data = await _get(self._anime_base, f"/anime/list?season={s}", auth=self._anime_auth)
+        resp = await _get(self._anime_base, f"/anime/list?season={s}", auth=self._anime_auth)
+        if not resp:
+            return "追番列表为空。"
+        total = resp.get("total", 0)
+        counts = resp.get("counts", {})
+        data = resp.get("data", [])
         if not data:
             return "追番列表为空。"
-        lines = [f"共追了 {len(data)} 部番剧："]
+        lines = []
+        # Summary line with counts
+        parts = []
+        if counts.get("completed"): parts.append(f"完结{counts['completed']}")
+        if counts.get("inProgress"): parts.append(f"进行中{counts['inProgress']}")
+        if counts.get("notStarted"): parts.append(f"未开始{counts['notStarted']}")
+        if counts.get("abandoned"): parts.append(f"弃番{counts['abandoned']}")
+        summary = f"共{total}部（{'、'.join(parts)}）"
+        if len(data) < total:
+            summary += f"，以下随机展示{len(data)}部"
+        lines.append(summary + "：")
         for a in data:
             ep = a.get("totalEpisodes")
             nxt = a.get("nextUnwatchedEpisode")
@@ -241,20 +256,39 @@ class Main(star.Star):
         if not await _check(self._anime_base, "MyAnime", auth=self._anime_auth):
             return "MyAnime 客户端未运行。"
         s = (season or "current").strip()
-        data = await _get(self._anime_base, f"/anime/history?season={s}", auth=self._anime_auth)
+        resp = await _get(self._anime_base, f"/anime/history?season={s}", auth=self._anime_auth)
+        if not resp:
+            return "还没有观看历史。"
+        total = resp.get("total", 0)
+        counts = resp.get("counts", {})
+        data = resp.get("data", [])
         if not data:
             return "还没有观看历史。"
         done = [a for a in data if a.get("isCompleted")]
-        ing = [a for a in data if not a.get("isCompleted") and a.get("watchedEpisodes", 0) > 0]
+        abandoned = [a for a in data if not a.get("isCompleted") and a.get("nextUnwatchedEpisode") is None]
+        ing = [a for a in data if not a.get("isCompleted") and a.get("nextUnwatchedEpisode") is not None and a.get("watchedEpisodes", 0) > 0]
+        ns = [a for a in data if not a.get("isCompleted") and a.get("nextUnwatchedEpisode") is not None and a.get("watchedEpisodes", 0) == 0]
         parts = []
+        # Summary with full counts
+        count_parts = []
+        if counts.get("completed"): count_parts.append(f"完结{counts['completed']}")
+        if counts.get("inProgress"): count_parts.append(f"进行中{counts['inProgress']}")
+        if counts.get("notStarted"): count_parts.append(f"未开始{counts['notStarted']}")
+        if counts.get("abandoned"): count_parts.append(f"弃番{counts['abandoned']}")
+        header = f"共{total}部（{'、'.join(count_parts)}）"
+        if len(data) < total:
+            header += f"，以下随机展示{len(data)}部"
+        parts.append(header)
         if done:
             parts.append(f"✅ 已完结 {len(done)} 部：" + "、".join(a.get("title","?") for a in done))
         if ing:
             rows = [f"{a.get('title','?')}（{a.get('watchedEpisodes',0)}/{a.get('totalEpisodes','?')}集）" for a in ing]
             parts.append(f"▶ 进行中 {len(ing)} 部：" + "、".join(rows))
-        ns = len(data) - len(done) - len(ing)
-        if ns > 0:
-            parts.append(f"⏸️ 未开始 {ns} 部。")
+        if ns:
+            parts.append(f"⏸️ 未开始 {len(ns)} 部：" + "、".join(a.get("title","?") for a in ns))
+        if abandoned:
+            rows = [f"{a.get('title','?')}（{a.get('watchedEpisodes',0)}/{a.get('totalEpisodes','?')}集）" for a in abandoned]
+            parts.append(f"🚫 已弃番 {len(abandoned)} 部：" + "、".join(rows))
         return "\n".join(parts) if parts else "暂无记录。"
 
     # ────────────────────────────────────────
