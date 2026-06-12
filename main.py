@@ -37,6 +37,16 @@ ANIME_TYPE_LABELS = {
     "allAtOnce": "全集上线",
 }
 
+HTTP_TIMEOUT_SECONDS = 12
+
+
+def _safe_timeout(value) -> int:
+    try:
+        seconds = int(value)
+        return max(1, seconds)
+    except Exception:
+        return 12
+
 
 def _make_auth_header(username: str, password: str) -> dict:
     if username and password:
@@ -47,7 +57,8 @@ def _make_auth_header(username: str, password: str) -> dict:
 
 async def _get(base: str, path: str, *, auth: dict | None = None):
     try:
-        async with aiohttp.ClientSession() as s:
+        timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT_SECONDS)
+        async with aiohttp.ClientSession(timeout=timeout) as s:
             async with s.get(f"{base}{path}", headers=auth or {}) as r:
                 return await r.json() if r.status == 200 else None
     except Exception as e:
@@ -57,7 +68,8 @@ async def _get(base: str, path: str, *, auth: dict | None = None):
 
 async def _post(base: str, path: str, data: dict, *, auth: dict | None = None):
     try:
-        async with aiohttp.ClientSession() as s:
+        timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT_SECONDS)
+        async with aiohttp.ClientSession(timeout=timeout) as s:
             async with s.post(f"{base}{path}", json=data, headers=auth or {}) as r:
                 return await r.json() if r.status == 200 else None
     except Exception as e:
@@ -182,14 +194,82 @@ def _format_endpoint(endpoint: dict) -> str:
     return f"{prefix}{target} {suffix}".strip()
 
 
+def _clean_text(value) -> str:
+    return str(value or "").strip()
+
+
+def _to_float(value):
+    try:
+        text = _clean_text(value)
+        return float(text) if text else None
+    except Exception:
+        return None
+
+
+def _to_bool(value, default: bool = True) -> bool:
+    text = _clean_text(value).lower()
+    if not text:
+        return default
+    if text in ("true", "1", "yes", "y", "完成", "是", "对", "打开"):
+        return True
+    if text in ("false", "0", "no", "n", "取消", "否", "不", "关闭"):
+        return False
+    return default
+
+
+def _match_named(items: list, keyword: str):
+    if not items:
+        return None
+    key = _clean_text(keyword).lower()
+    if key:
+        for item in items:
+            name = _clean_text(item.get("name")).lower()
+            title = _clean_text(item.get("title")).lower()
+            bank = _clean_text(item.get("bankOrApp")).lower()
+            if key in name or key in title or key in bank:
+                return item
+    return items[0]
+
+
+def _format_measurements(value: dict | None) -> str:
+    if not isinstance(value, dict):
+        return ""
+    parts = []
+    for key, label in (("bustCm", "胸"), ("waistCm", "腰"), ("hipCm", "臀")):
+        if value.get(key) is not None:
+            parts.append(f"{label}{float(value[key]):.1f}cm")
+    return "，".join(parts)
+
+
+def _format_weight_record(record: dict) -> str:
+    date = record.get("date") or (record.get("datetime") or "")[:10]
+    weight = record.get("weight")
+    body_fat = record.get("bodyFat")
+    measure = _format_measurements(record.get("effectiveMeasurements"))
+    parts = [date, f"{float(weight):.1f}kg" if weight is not None else "?kg"]
+    if body_fat is not None:
+        parts.append(f"体脂{float(body_fat):.1f}%")
+    if measure:
+        parts.append(measure)
+    return "，".join(parts)
+
+
+def _billing_cycle_text(sub: dict) -> str:
+    unit = "月" if sub.get("billingCycleType") == "monthly" else "年"
+    interval = sub.get("billingInterval") or 1
+    return f"每{interval}{unit}" if interval != 1 else f"{unit}付"
+
+
 # ════════════════════════════════════════════
 #  插件主类
 # ════════════════════════════════════════════
 
 class Main(star.Star):
     def __init__(self, context: star.Context, config: AstrBotConfig) -> None:
+        global HTTP_TIMEOUT_SECONDS
         self.context = context
         self.config = config
+        HTTP_TIMEOUT_SECONDS = _safe_timeout(config.get("http_timeout", 12))
 
     def _check_sender(self, event: AstrMessageEvent) -> str | None:
         allowed = self.config.get("allowed_sender_ids", [])
@@ -827,7 +907,7 @@ class Main(star.Star):
 
     @llm_tool(name="todo_today")
     async def todo_today(self, event: AstrMessageEvent, date: str):
-        """获取 MyDay 中某天的待办任务列表。当用户问今天/某天有什么待办、任���、日程时调用。
+        """获取 MyDay 中某天的待办任务列表和日评分。当用户问今天/某天有什么待办、任务、日程时调用。
 
         Args:
             date(string): 日期，格式 yyyy-MM-dd，查询今天时传今天的日期
@@ -837,21 +917,28 @@ class Main(star.Star):
             return "MyDay 待办功能已关闭。"
         if not await _check(self._day_base, "MyDay", auth=self._day_auth):
             return "MyDay 客户端未运行，请先启动。"
-        path = f"/todo/list?date={date}" if date else "/todo/list"
+        path = f"/todo/day?date={date}" if date else "/todo/day"
         data = await _get(self._day_base, path, auth=self._day_auth)
         if data is None:
             return "获取待办列表失败。"
-        if not data:
+        tasks = data.get("tasks", []) if isinstance(data, dict) else data
+        if not tasks:
             return f"{date or '今天'} 没有待办任务。"
-        done = [t for t in data if t.get("isCompleted")]
-        todo = [t for t in data if not t.get("isCompleted")]
-        lines = [f"📋 {date or '今天'}的任务（{len(done)}/{len(data)} 已完成）"]
+        done = [t for t in tasks if t.get("isCompleted")]
+        todo = [t for t in tasks if not t.get("isCompleted")]
+        score_text = ""
+        if isinstance(data, dict):
+            score_text = f"，评分 {data.get('score', 0)}"
+        lines = [f"📋 {date or '今天'}的任务（{len(done)}/{len(tasks)} 已完成{score_text}）"]
         if todo:
             lines.append("待完成：")
             for t in todo:
                 emoji = t.get("emoji") or "○"
+                note = f"｜{_short_text(t.get('note'), 36)}" if t.get("note") else ""
                 due = f" 截止{t['dueDate'][:10]}" if t.get("dueDate") else ""
-                lines.append(f"  {emoji} {t.get('title','?')}{due}")
+                subtasks = [s for s in t.get("subtasks", []) if not s.get("isCompleted")]
+                subtext = f"（{len(subtasks)}个子任务未完成）" if subtasks else ""
+                lines.append(f"  {emoji} {t.get('title','?')}{due}{subtext}{note}")
         if done:
             lines.append("已完成：")
             for t in done:
@@ -860,13 +947,21 @@ class Main(star.Star):
         return "\n".join(lines)
 
     @llm_tool(name="todo_add")
-    async def todo_add(self, event: AstrMessageEvent, title: str, task_type: str, due_date: str):
+    async def todo_add(self, event: AstrMessageEvent, title: str, task_type: str, due_date: str, note: str, scheduled_date: str, reminder_time: str, subtasks: str, recurrence_type: str, recurrence_interval_days: str, recurrence_month: str, recurrence_day: str):
         """向 MyDay 添加一条待办任务。当用户说要添加任务、提醒、待办事项时调用。
 
         Args:
             title(string): 任务标题
             task_type(string): 任务类型：daily（每日循环）/ routineOnce（一次性例行）/ workOnce（一次性工作）
             due_date(string): 截止日期，格式 yyyy-MM-dd，没有则传空字符串
+            note(string): 备注，没有则传空字符串
+            scheduled_date(string): 计划日期/每日任务开始日期，格式 yyyy-MM-dd，没有则传空字符串
+            reminder_time(string): 提醒时间，ISO8601 日期时间，没有则传空字符串
+            subtasks(string): 子任务，多个用中文或英文逗号分隔，没有则传空字符串
+            recurrence_type(string): 一次性任务复发类型：everyNDays/monthlyOnDay/yearlyOnMonthDay，没有则传空字符串
+            recurrence_interval_days(string): everyNDays 的天数，没有则传空字符串
+            recurrence_month(string): yearlyOnMonthDay 的月份，没有则传空字符串
+            recurrence_day(string): monthly/yearly 的日期，没有则传空字符串
         """
         if (deny := self._check_sender(event)): return deny
         if not self._day_todo_enabled:
@@ -875,15 +970,113 @@ class Main(star.Star):
             return "MyDay 处于只读模式，无法添加任务。"
         if not await _check(self._day_base, "MyDay", auth=self._day_auth):
             return "MyDay 客户端未运行。"
+        recurrence = None
+        rtype = _clean_text(recurrence_type)
+        if rtype == "everyNDays":
+            days = int(_to_float(recurrence_interval_days) or 0)
+            if days > 0:
+                recurrence = {"type": rtype, "intervalDays": days}
+        elif rtype == "monthlyOnDay":
+            day = int(_to_float(recurrence_day) or 0)
+            if day > 0:
+                recurrence = {"type": rtype, "dayOfMonth": day}
+        elif rtype == "yearlyOnMonthDay":
+            month = int(_to_float(recurrence_month) or 0)
+            day = int(_to_float(recurrence_day) or 0)
+            if month > 0 and day > 0:
+                recurrence = {"type": rtype, "monthOfYear": month, "dayOfMonth": day}
+        subtask_items = [
+            {"title": item.strip()}
+            for chunk in _clean_text(subtasks).split("，")
+            for item in chunk.split(",")
+            if item.strip()
+        ]
         payload = {
             "title": title,
             "type": task_type or "workOnce",
+            "note": note or None,
             "dueDate": due_date or None,
+            "scheduledDate": scheduled_date or None,
+            "reminderTime": reminder_time or None,
+            "subtasks": subtask_items,
+            "recurrence": recurrence,
         }
         r = await _post(self._day_base, "/todo/add", payload, auth=self._day_auth)
         if r and r.get("success"):
-            return f"已添加待办任务「{title}」！"
+            task = r.get("task") or {}
+            sub_count = len(task.get("subtasks") or [])
+            suffix = f"（{sub_count}个子任务）" if sub_count else ""
+            return f"已添加待办任务「{title}」{suffix}！"
         return f"添加任务「{title}」失败。"
+
+    @llm_tool(name="todo_complete")
+    async def todo_complete(self, event: AstrMessageEvent, title: str, date: str, completed: str, subtask_title: str, create_next_recurrence: str):
+        """完成或取消完成 MyDay 待办。当用户说完成/取消完成某个任务或子任务时调用。
+
+        Args:
+            title(string): 任务标题关键词
+            date(string): 日期，格式 yyyy-MM-dd，今天则传今天日期
+            completed(string): true 表示完成，false 表示取消完成
+            subtask_title(string): 子任务标题关键词，没有则传空字符串
+            create_next_recurrence(string): 复发任务完成后是否创建下一次，true/false
+        """
+        if (deny := self._check_sender(event)): return deny
+        if not self._day_todo_enabled:
+            return "MyDay 待办功能已关闭。"
+        if self._day_readonly:
+            return "MyDay 处于只读模式，无法修改任务。"
+        if not await _check(self._day_base, "MyDay", auth=self._day_auth):
+            return "MyDay 客户端未运行。"
+        day_path = f"/todo/day?date={date}" if date else "/todo/day"
+        data = await _get(self._day_base, day_path, auth=self._day_auth)
+        tasks = (data or {}).get("tasks", []) if isinstance(data, dict) else []
+        task = _match_named(tasks, title)
+        if not task:
+            return f"没有找到任务「{title}」。"
+        payload = {
+            "id": task.get("id"),
+            "date": date or None,
+            "completed": _to_bool(completed, True),
+            "createNextRecurrence": _to_bool(create_next_recurrence, False),
+        }
+        sub_key = _clean_text(subtask_title).lower()
+        if sub_key:
+            subtask = _match_named(task.get("subtasks", []), subtask_title)
+            if not subtask:
+                return f"任务「{task.get('title','?')}」里没有找到子任务「{subtask_title}」。"
+            payload["subtaskId"] = subtask.get("id")
+        r = await _post(self._day_base, "/todo/complete", payload, auth=self._day_auth)
+        if r and r.get("success"):
+            action = "完成" if payload["completed"] else "取消完成"
+            tail = f"，并创建下一次任务 {r.get('nextScheduledDate', '')[:10]}" if r.get("nextTaskId") else ""
+            return f"已{action}「{task.get('title','?')}」{tail}。"
+        return "更新任务失败。"
+
+    @llm_tool(name="todo_score")
+    async def todo_score(self, event: AstrMessageEvent, date: str, score: str):
+        """设置 MyDay 某天的日评分。当用户说今天/某天评分、开心/痛苦分数时调用。
+
+        Args:
+            date(string): 日期，格式 yyyy-MM-dd，今天则传今天日期
+            score(string): -5 到 5 的整数
+        """
+        if (deny := self._check_sender(event)): return deny
+        if not self._day_todo_enabled:
+            return "MyDay 待办功能已关闭。"
+        if self._day_readonly:
+            return "MyDay 处于只读模式，无法设置评分。"
+        if not await _check(self._day_base, "MyDay", auth=self._day_auth):
+            return "MyDay 客户端未运行。"
+        value = _to_float(score)
+        if value is None:
+            return f"评分格式错误：{score}"
+        r = await _post(self._day_base, "/todo/score", {
+            "date": date or None,
+            "score": int(round(value)),
+        }, auth=self._day_auth)
+        if r and r.get("success"):
+            return f"已设置 {r.get('date')} 的日评分：{r.get('score')}。"
+        return "设置日评分失败。"
 
     @llm_tool(name="todo_stats")
     async def todo_stats(self, event: AstrMessageEvent):
@@ -927,30 +1120,89 @@ class Main(star.Star):
         income = data.get("income", 0)
         expense = data.get("expense", 0)
         balance = data.get("balance", 0)
+        currency = data.get("defaultCurrency") or ""
         lines = [
             f"💰 {month or '本月'}财务摘要",
-            f"  收入：{income:,.2f}",
-            f"  支出：{expense:,.2f}",
-            f"  结余：{balance:,.2f}",
+            f"  收入：{income:,.2f}{currency}",
+            f"  支出：{expense:,.2f}{currency}",
+            f"  结余：{balance:,.2f}{currency}",
+            f"  总资产：{data.get('total_assets', 0):,.2f}{currency}",
         ]
         top = data.get("top_expense_categories", [])
         if top:
-            lines.append("支出前三：" + "、".join(f"{c['name']}({c['amount']:.0f})" for c in top[:3]))
+            lines.append("支出前三：" + "、".join(f"{c['name']}({c['amount']:.0f}{currency})" for c in top[:3]))
         accounts = data.get("accounts", [])
         if accounts:
-            acc_str = "、".join(f"{a['name']}:{a.get('balance',0):.0f}{a.get('currency','')}" for a in accounts[:3])
+            acc_str = "、".join(
+                f"{a['name']}:{a.get('balance',0):.0f}{a.get('currency','')}"
+                + (f"/{a.get('convertedBalance',0):.0f}{currency}" if a.get("currency") != currency else "")
+                for a in accounts[:3]
+            )
             lines.append(f"账户：{acc_str}")
         return "\n".join(lines)
 
+    @llm_tool(name="finance_accounts")
+    async def finance_accounts(self, event: AstrMessageEvent, account_type: str):
+        """查询 MyDay 财务账户。当用户问有哪些账户、银行卡、余额时调用。
+
+        Args:
+            account_type(string): 账户类型 fund/credit/recharge/financial，不筛选传空字符串
+        """
+        if (deny := self._check_sender(event)): return deny
+        if not self._day_finance_enabled:
+            return "MyDay 财务功能已关闭。"
+        if not await _check(self._day_base, "MyDay", auth=self._day_auth):
+            return "MyDay 客户端未运行。"
+        path = f"/finance/accounts?type={account_type}" if account_type else "/finance/accounts"
+        data = await _get(self._day_base, path, auth=self._day_auth)
+        if not data:
+            return "没有找到账户。"
+        lines = [f"💳 MyDay账户（{len(data)}个）"]
+        for a in data[:12]:
+            default = a.get("defaultCurrency") or ""
+            converted = ""
+            if a.get("currency") != default:
+                converted = f"≈{a.get('convertedBalance',0):,.2f}{default}"
+            lines.append(f"· {a.get('name','?')} [{a.get('type','?')}] {a.get('balance',0):,.2f}{a.get('currency','')} {converted}".strip())
+        return "\n".join(lines)
+
+    @llm_tool(name="finance_categories")
+    async def finance_categories(self, event: AstrMessageEvent, ttype: str):
+        """查询 MyDay 财务分类。当用户问有哪些支出/收入/转账分类时调用。
+
+        Args:
+            ttype(string): 分类类型 expense/income/transfer，不筛选传空字符串
+        """
+        if (deny := self._check_sender(event)): return deny
+        if not self._day_finance_enabled:
+            return "MyDay 财务功能已关闭。"
+        if not await _check(self._day_base, "MyDay", auth=self._day_auth):
+            return "MyDay 客户端未运行。"
+        path = f"/finance/categories?type={ttype}" if ttype else "/finance/categories"
+        data = await _get(self._day_base, path, auth=self._day_auth)
+        if not data:
+            return "没有找到分类。"
+        lines = [f"🏷️ MyDay分类（{len(data)}个）"]
+        for c in data[:30]:
+            emoji = c.get("emoji") or "·"
+            lines.append(f"{emoji} {c.get('name','?')}（{c.get('type','?')}）")
+        return "\n".join(lines)
+
     @llm_tool(name="finance_add_transaction")
-    async def finance_add_transaction(self, event: AstrMessageEvent, ttype: str, amount: str, note: str, account_name: str):
-        """向 MyDay 记录一笔收入或支出。当用户说花了多少钱、收了多少钱、记一笔账时调用。
+    async def finance_add_transaction(self, event: AstrMessageEvent, ttype: str, amount: str, note: str, account_name: str, category_name: str, date: str, currency: str, to_account_name: str, to_amount: str, to_currency: str):
+        """向 MyDay 记录一笔收入、支出或转账。当用户说花了多少钱、收了多少钱、记一笔账、转账时调用。
 
         Args:
             ttype(string): 交易类型：expense（支出）/ income（收入）/ transfer（转账）
             amount(string): 金额，如 "88.5"
             note(string): 备注，如"午饭"、"工资"，没有传空字符串
             account_name(string): 账户名称关键词，没有传空字符串，将使用默认账户
+            category_name(string): 分类名称关键词，没有传空字符串
+            date(string): 日期时间，ISO8601 或 yyyy-MM-dd，没有传空字符串
+            currency(string): 源金额币种，没有传空字符串则使用账户币种
+            to_account_name(string): 转入账户名称关键词，仅转账需要
+            to_amount(string): 转入金额，跨币种转账可传，没有则传空字符串
+            to_currency(string): 转入币种，没有则使用转入账户币种
         """
         if (deny := self._check_sender(event)): return deny
         if not self._day_finance_enabled:
@@ -959,32 +1211,43 @@ class Main(star.Star):
             return "MyDay 处于只读模式，无法记账。"
         if not await _check(self._day_base, "MyDay", auth=self._day_auth):
             return "MyDay 客户端未运行。"
-        # 先获取账户列表匹配 accountId
-        summary = await _get(self._day_base, "/finance/summary", auth=self._day_auth)
-        accounts = (summary or {}).get("accounts", [])
-        account_id = None
-        if account_name and accounts:
-            for a in accounts:
-                if account_name.lower() in a.get("name","").lower():
-                    account_id = a.get("id")
-                    break
-        if not account_id and accounts:
-            account_id = accounts[0].get("id")
-        if not account_id:
+        ttype = ttype or "expense"
+        accounts = await _get(self._day_base, "/finance/accounts", auth=self._day_auth) or []
+        account = _match_named(accounts, account_name)
+        if not account:
             return "未找到账户，请先在 MyDay 中创建账户。"
+        target_account = None
+        if ttype == "transfer":
+            if not to_account_name:
+                return "请指定转入账户。"
+            target_account = _match_named(accounts, to_account_name)
+            if not target_account:
+                return "未找到转入账户，请指定转入账户。"
+        categories = await _get(self._day_base, f"/finance/categories?type={ttype}", auth=self._day_auth) or []
+        category = _match_named(categories, category_name) if category_name else None
         try:
             amt = float(amount)
         except Exception:
             return f"金额格式错误：{amount}"
-        r = await _post(self._day_base, "/finance/add_transaction", {
+        payload = {
             "type": ttype,
             "amount": amt,
-            "accountId": account_id,
+            "currency": currency.upper() if currency else None,
+            "accountId": account.get("id"),
+            "toAccountId": target_account.get("id") if target_account else None,
+            "toAmount": _to_float(to_amount),
+            "toCurrency": to_currency.upper() if to_currency else None,
+            "categoryId": category.get("id") if category else None,
             "note": note or "",
-        }, auth=self._day_auth)
+            "date": date or None,
+        }
+        r = await _post(self._day_base, "/finance/add_transaction", payload, auth=self._day_auth)
         if r and r.get("success"):
             type_cn = {"expense":"支出","income":"收入","transfer":"转账"}.get(ttype, ttype)
-            return f"已记录{type_cn}：{amt:.2f} 元，备注「{note or '无'}」。"
+            tx = r.get("transaction") or {}
+            target = f" -> {tx.get('toAccountName')}" if tx.get("toAccountName") else ""
+            cat = f"，分类「{tx.get('categoryName')}」" if tx.get("categoryName") else ""
+            return f"已记录{type_cn}：{amt:.2f}{tx.get('currency','')}{target}{cat}，备注「{note or '无'}」。"
         return "记账失败，请稍后再试。"
 
     @llm_tool(name="finance_subscriptions")
@@ -1004,16 +1267,22 @@ class Main(star.Star):
         lines = [f"📦 活跃订阅（共 {len(data)} 项）"]
         for s in data:
             nxt = (s.get("nextBillingDate") or "")[:10]
-            cyc = "月付" if s.get("billingCycleType") == "monthly" else "年付"
-            lines.append(f"· {s.get('name','?')} — {s.get('amount',0):.2f}{s.get('currency','')} {cyc}，下次：{nxt or '未知'}")
+            account = f"，账户：{s.get('accountName')}" if s.get("accountName") else ""
+            lines.append(f"· {s.get('name','?')} — {s.get('amount',0):.2f}{s.get('currency','')} {_billing_cycle_text(s)}，下次：{nxt or '未知'}{account}")
         return "\n".join(lines)
 
     @llm_tool(name="weight_log")
-    async def weight_log(self, event: AstrMessageEvent, weight: str):
-        """向 MyDay 记录今天的体重数据。当用户说今天体重是多少、记录体重时调用。
+    async def weight_log(self, event: AstrMessageEvent, weight: str, body_fat: str, bust_cm: str, waist_cm: str, hip_cm: str, notes: str, date: str):
+        """向 MyDay 记录体重、体脂和三围数据。当用户说今天体重是多少、记录体重/体脂/三围时调用。
 
         Args:
             weight(string): 体重数值，单位 kg，如 "65.5"
+            body_fat(string): 体脂百分比，没有则传空字符串
+            bust_cm(string): 胸围 cm，没有则传空字符串
+            waist_cm(string): 腰围 cm，没有则传空字符串
+            hip_cm(string): 臀围 cm，没有则传空字符串
+            notes(string): 备注，没有则传空字符串
+            date(string): 日期时间，ISO8601 或 yyyy-MM-dd，没有传空字符串
         """
         if (deny := self._check_sender(event)): return deny
         if not self._day_weight_enabled:
@@ -1026,14 +1295,27 @@ class Main(star.Star):
             w = float(weight)
         except Exception:
             return f"体重格式错误：{weight}"
-        r = await _post(self._day_base, "/weight/add", {"weight": w}, auth=self._day_auth)
+        payload = {
+            "weight": w,
+            "bodyFat": _to_float(body_fat),
+            "bustCm": _to_float(bust_cm),
+            "waistCm": _to_float(waist_cm),
+            "hipCm": _to_float(hip_cm),
+            "notes": notes or None,
+            "date": date or None,
+        }
+        r = await _post(self._day_base, "/weight/add", payload, auth=self._day_auth)
         if r and r.get("success"):
-            return f"已记录体重 {w} kg！"
+            record = r.get("record") or {}
+            extra = _format_measurements(record.get("effectiveMeasurements"))
+            body_text = f"，体脂 {record.get('bodyFat'):.1f}%" if record.get("bodyFat") is not None else ""
+            measure_text = f"，{extra}" if extra else ""
+            return f"已记录体重 {w} kg{body_text}{measure_text}！"
         return "记录体重失败。"
 
     @llm_tool(name="weight_stats")
     async def weight_stats(self, event: AstrMessageEvent):
-        """查询 MyDay 的体重统计和趋势。当用户问体重变化、近期体重、体重趋势时调用。
+        """查询 MyDay 的体重统计和近期记录。当用户问体重变化、近期体重、体重趋势时调用。
 
         Args:
         """
@@ -1053,7 +1335,40 @@ class Main(star.Star):
         if latest: lines.append(f"  最新：{latest:.1f} kg")
         if avg7:   lines.append(f"  7日均：{avg7:.1f} kg")
         if avg30:  lines.append(f"  30日均：{avg30:.1f} kg")
+        if data.get("bmi") is not None:
+            lines.append(f"  BMI：{data.get('bmi'):.2f}")
+        if data.get("waistHipRatio") is not None:
+            lines.append(f"  腰臀比：{data.get('waistHipRatio'):.3f}")
+        measure = _format_measurements(data.get("effectiveMeasurements"))
+        if measure:
+            lines.append(f"  有效三围：{measure}")
         lines.append(f"  趋势：{trend}")
+        recent = await _get(self._day_base, "/weight/list?limit=3", auth=self._day_auth)
+        if recent:
+            lines.append("近期记录：")
+            for record in recent:
+                lines.append(f"· {_format_weight_record(record)}")
+        return "\n".join(lines)
+
+    @llm_tool(name="weight_recent")
+    async def weight_recent(self, event: AstrMessageEvent, limit: str):
+        """查询 MyDay 最近的体重记录。当用户问最近几条体重记录时调用。
+
+        Args:
+            limit(string): 数量，如 5；没有则传空字符串
+        """
+        if (deny := self._check_sender(event)): return deny
+        if not self._day_weight_enabled:
+            return "MyDay 体重功能已关闭。"
+        if not await _check(self._day_base, "MyDay", auth=self._day_auth):
+            return "MyDay 客户端未运行。"
+        n = int(_to_float(limit) or 10)
+        data = await _get(self._day_base, f"/weight/list?limit={max(1, min(n, 30))}", auth=self._day_auth)
+        if not data:
+            return "没有体重记录。"
+        lines = [f"⚖️ 最近体重记录（{len(data)}条）"]
+        for record in data:
+            lines.append(f"· {_format_weight_record(record)}")
         return "\n".join(lines)
 
     # ────────────────────────────────────────

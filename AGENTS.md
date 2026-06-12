@@ -8,7 +8,7 @@ This file is the operating guide for agents working on **astrbot_plugin_myapps**
 - **Description:** AstrBot plugin integrating MyAnime, MyDevice, and MyDay with LLM Function Calling natural-language interaction plus a traditional `/myapps` command.
 - **Author:** `YuanZhe-99`.
 - **License:** GPL-3.0.
-- **Current version:** `0.4.1` in `metadata.yaml`.
+- **Current version:** `0.4.2` in `metadata.yaml`.
 - **Framework:** AstrBot Star plugin written in async Python.
 - **Runtime dependency:** `aiohttp`, normally bundled with AstrBot.
 - **Repository:** Use the current runtime workspace root / repository path instead of hard-coding a machine-specific absolute path.
@@ -99,7 +99,7 @@ Global config:
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `allowed_sender_ids` | list | `[]` | Platform sender IDs allowed to use the plugin. Empty means unrestricted. |
-| `http_timeout` | int | `12` | Request timeout setting in schema. Current helper calls do not yet pass this into `aiohttp.ClientSession`. |
+| `http_timeout` | int | `12` | Request timeout applied to all aiohttp GET/POST calls through `ClientTimeout(total=...)`. |
 
 Per-app config keys follow this pattern:
 
@@ -161,7 +161,9 @@ Device categories currently include `all`, `desktop`, `laptop`, `phone`, `tablet
 | Tool | Args | Behavior |
 | --- | --- | --- |
 | `todo_today` | `date` | List tasks for a date. |
-| `todo_add` | `title`, `task_type`, `due_date` | Add a task. Write operation; blocked in read-only mode. |
+| `todo_add` | `title`, `task_type`, `due_date`, `note`, `scheduled_date`, `reminder_time`, `subtasks`, recurrence fields | Add a task with notes, schedule/start date, reminder, subtasks, and optional one-time recurrence. Write operation; blocked in read-only mode. |
+| `todo_complete` | `title`, `date`, `completed`, `subtask_title`, `create_next_recurrence` | Complete or reopen a task/subtask by title keyword. Write operation; blocked in read-only mode. |
+| `todo_score` | `date`, `score` | Set the todo day score from -5 to 5. Write operation; blocked in read-only mode. |
 | `todo_stats` | none | Show today's completion stats. |
 
 `task_type` values are `daily`, `routineOnce`, and `workOnce`.
@@ -171,17 +173,20 @@ Device categories currently include `all`, `desktop`, `laptop`, `phone`, `tablet
 | Tool | Args | Behavior |
 | --- | --- | --- |
 | `finance_summary` | `month` | Show monthly income, expense, balance, top expense categories, and sample accounts. |
-| `finance_add_transaction` | `ttype`, `amount`, `note`, `account_name` | Record income, expense, or transfer using a matched/default account. Write operation; blocked in read-only mode. |
+| `finance_accounts` | `account_type` | List accounts and balances, optionally filtered by account type. |
+| `finance_categories` | `ttype` | List expense/income/transfer categories. |
+| `finance_add_transaction` | `ttype`, `amount`, `note`, `account_name`, `category_name`, `date`, `currency`, `to_account_name`, `to_amount`, `to_currency` | Record income, expense, or transfer using matched account/category names. Write operation; blocked in read-only mode. |
 | `finance_subscriptions` | none | List active subscriptions and next billing dates. |
 
-`ttype` values are `expense`, `income`, and `transfer`. The plugin does not perform currency conversion; it formats values from the MyDay API response.
+`ttype` values are `expense`, `income`, and `transfer`. MyDay `0.8.0+` performs default-currency conversion in `/finance/summary`; the plugin formats values from the API response.
 
 ### MyDay Weight
 
 | Tool | Args | Behavior |
 | --- | --- | --- |
-| `weight_log` | `weight` | Record today's weight in kg. Write operation; blocked in read-only mode. |
-| `weight_stats` | none | Show latest, 7-day average, 30-day average, and trend. |
+| `weight_log` | `weight`, `body_fat`, `bust_cm`, `waist_cm`, `hip_cm`, `notes`, `date` | Record weight, optional body fat, measurements, notes, and date. Write operation; blocked in read-only mode. |
+| `weight_stats` | none | Show latest, averages, BMI, waist-hip ratio, effective measurements, trend, and recent records. |
+| `weight_recent` | `limit` | List recent weight records with body composition and effective measurements. |
 
 ## Traditional Commands
 
@@ -199,7 +204,7 @@ The plugin calls these endpoints:
 | --- | --- |
 | MyAnime | `GET /ping`, `POST /anime/search`, `POST /anime/add`, `GET /anime/list`, `GET /anime/unwatched`, `GET /anime/history`, `GET /anime/ranking` |
 | MyDevice | `GET /ping`, `GET /device/list`, `GET /device/search`, `POST /device/add`, `GET /device/stats` |
-| MyDay | `GET /ping`, `GET /todo/list`, `POST /todo/add`, `GET /todo/stats`, `GET /finance/summary`, `POST /finance/add_transaction`, `GET /finance/subscriptions`, `POST /weight/add`, `GET /weight/stats` |
+| MyDay | `GET /ping`, `GET /todo/list`, `GET /todo/day`, `POST /todo/add`, `POST /todo/complete`, `POST /todo/score`, `GET /todo/stats`, `GET /finance/summary`, `GET /finance/accounts`, `GET /finance/categories`, `GET /finance/transactions`, `POST /finance/add_transaction`, `GET /finance/subscriptions`, `GET /weight/list`, `POST /weight/add`, `GET /weight/stats` |
 
 The README lists a broader set of local API endpoints implemented by the apps. `main.py` is the source of truth for endpoints currently used by this plugin.
 
@@ -245,3 +250,4 @@ Use the narrowest relevant verification. Documentation-only changes usually need
 - `v0.3.1`: MyAnime list/history consume `total`, `counts`, and `data`, show full summary counts, and classify abandoned anime correctly.
 - `v0.4.0`: Added MyDevice service, network, and dataset query tools plus richer device detail formatting.
 - `v0.4.1`: Added MyAnime rating ranking tool and consumed the refreshed MyAnime status/progress/rating API fields.
+- `v0.4.2`: Refreshed MyDay integration for MyDay `0.8.0`, adding todo completion/day scores, finance account/category lookup, richer transaction creation, body-composition weight logging/recent records, and configured HTTP timeouts.

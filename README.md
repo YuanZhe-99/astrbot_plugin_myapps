@@ -8,7 +8,7 @@
 |-----|------|-------------|
 | 📺 **MyAnime** | 添加番剧、查看追番列表、未看番剧、观看历史、评分排行 | 「帮我追葬送的芙莉莲」「我有什么番没看完」「我的番剧评分排行」 |
 | 💻 **MyDevice** | 查询设备列表、搜索设备规格、添加设备、统计 | 「我有哪些笔记本」「我的 MacBook 配置是什么」 |
-| 📅 **MyDay** | 查看/添加待办、收支摘要、记账、订阅查询、体重记录/统计 | 「今天有什么待办」「本月花了多少」「记录今天体重65.5kg」 |
+| 📅 **MyDay** | 查看/添加/完成待办、日评分、收支摘要、账户/分类、记账/转账、订阅、体重/体脂/三围 | 「今天有什么待办」「今天评分3分」「本月花了多少」「记录今天体重65.5kg体脂21%」 |
 
 ---
 
@@ -119,6 +119,12 @@ Bot:  💰 2026-04 财务摘要
 
 用户: 今天体重65.2公斤
 Bot:  已记录体重 65.2 kg！
+
+用户: 今天评分4分
+Bot:  已设置 2026-04-01 的日评分：4。
+
+用户: 从现金转100到招商银行
+Bot:  已记录转账：100.00CNY -> 招商银行，备注「无」。
 ```
 
 ### 传统指令
@@ -135,16 +141,16 @@ Bot:  已记录体重 65.2 kg！
 |-----|------|---------|
 | MyAnime | 7788 | `/ping` `/anime/search` `/anime/add` `/anime/list` `/anime/unwatched` `/anime/history` `/anime/ranking` |
 | MyDevice | 7789 | `/ping` `/device/list` `/device/search` `/device/add` `/device/stats` |
-| MyDay | 7790 | `/ping` `/todo/list` `/todo/add` `/todo/complete` `/todo/stats` `/finance/summary` `/finance/transactions` `/finance/add_transaction` `/finance/subscriptions` `/weight/list` `/weight/add` `/weight/stats` |
+| MyDay | 7790 | `/ping` `/todo/list` `/todo/day` `/todo/add` `/todo/complete` `/todo/score` `/todo/stats` `/finance/summary` `/finance/accounts` `/finance/categories` `/finance/transactions` `/finance/add_transaction` `/finance/subscriptions` `/weight/list` `/weight/add` `/weight/stats` |
 
 ---
 
 ## 注意事项
 
 1. **App 必须运行**：插件通过 HTTP 调用本地 App，对应客户端必须处于运行状态
-2. **隐私安全**：所有 API 仅绑定 `127.0.0.1`，局域网和外网无法访问
+2. **隐私安全**：默认 API 绑定 localhost；如 App 侧配置了用户名密码，插件会通过 Basic Auth 访问
 3. **端口冲突**：如果端口已被占用，可修改 `main.py` 顶部的 `*_BASE` 常量，并同步修改 Flutter 端的端口号
-4. **货币计算**：`finance/summary` 中多货币账户的 balance 是按各自货币单独计算的，插件不做汇率换算
+4. **货币计算**：MyDay `0.8.0+` 的 `finance/summary` 会返回默认币种折算后的收支、分类和总资产，账户仍保留原币种余额
 
 ---
 

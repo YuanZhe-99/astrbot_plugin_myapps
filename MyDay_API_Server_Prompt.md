@@ -20,23 +20,29 @@
 
 ### Todo（lib/features/todo/models/task.dart）
 - Task 字段：id, title, emoji, type(TaskType: daily/routineOnce/workOnce),
-  isCompleted, reminderTime, subtasks(List<SubTask>), createdDate,
-  completedDate, scheduledDate, deletedDate, startDate, dueDate, modifiedAt
+  note, isCompleted, reminderTime, subtasks(List<SubTask>), createdDate,
+  completedDate, scheduledDate, deletedDate, startDate, dueDate, recurrence, modifiedAt
 - SubTask 字段：id, title, isCompleted, modifiedAt
 - DailyCompletionLog：追踪每日任务完成状态
+- DailyScoreLog：追踪每日 -5..5 日评分，显式 0 也要保留
 
 ### Finance（lib/features/finance/models/finance.dart）
 - Account 字段：id, type(AccountType: fund/credit/recharge/financial),
-  bankOrApp, name, currency, cardNumber, expiryDate, emoji, modifiedAt
+  bankOrApp, name, currency, cardNumber, expiryDate, securityCode, emoji,
+  imagePath, feeWaiverMinimumBalance, feeWaiverMonthlyDeposit, modifiedAt
 - Transaction 字段：id, type(TransactionType: expense/income/transfer),
-  amount, currency, accountId, toAccountId, toAmount, categoryId, note, date, modifiedAt
-- Category 字段：id, name, type(expense/income), emoji, modifiedAt
+  amount, currency, rateSnapshotId, accountId, toAccountId, toAmount,
+  toCurrency, categoryId, subscriptionId, note, date, modifiedAt
+- Category 字段：id, name, type(expense/income/transfer), emoji, icon, modifiedAt
 - Subscription 字段：id, name, emoji, startDate, trialDays,
   billingCycleType(monthly/yearly), billingInterval, amount, currency,
   accountId, isActive, nextBillingDate, modifiedAt
 
-### Weight（lib/features/weight/models/ 中，参考同目录文件）
-- WeightEntry 字段推断：id, weight(double), date(DateTime), modifiedAt
+### Weight（lib/features/weight/models/weight_record.dart）
+- WeightRecord 字段：id, weight(double), bodyFat, bustCm, waistCm, hipCm,
+  datetime, notes, modifiedAt
+- WeightData 字段：height, records, reminder settings, reminderGraceMinutes,
+  settingsModifiedAt
 
 ## 需要实现的 API 端点
 
@@ -49,15 +55,29 @@
 - 查询参数：date=yyyy-MM-dd（可选，不传则返回今日），type=daily|routineOnce|workOnce（可选）
 - 返回该日期的任务列表（包含当天有效的 daily 模板 + 当天的 workOnce/routineOnce）
 - 每个任务包含：id, title, emoji, type, isCompleted(考虑DailyCompletionLog), 
-  subtasks, dueDate, scheduledDate
+  note, reminderTime, subtasks(含modifiedAt), created/completed/scheduled/start/due/deleted日期,
+  recurrence, modifiedAt
+
+#### GET /todo/day
+- 查询参数：date=yyyy-MM-dd（可选，不传则返回今日）
+- 返回：{"date": "yyyy-MM-dd", "score": int, "total": int, "completed": int, "tasks": [...]}
 
 #### POST /todo/add
-- 请求体：{"title": string, "type": string, "emoji": string?, "dueDate": string?, "scheduledDate": string?}
+- 请求体：{"title": string, "type": string, "emoji": string?, "note": string?,
+  "dueDate": string?, "scheduledDate": string?, "reminderTime": string?,
+  "subtasks": [{"title": string, "isCompleted": bool?}]?,
+  "recurrence": {"type": "everyNDays"|"monthlyOnDay"|"yearlyOnMonthDay",
+  "intervalDays": int?, "monthOfYear": int?, "dayOfMonth": int?}?}
 - 返回：{"success": true, "id": string}
 
 #### POST /todo/complete
-- 请求体：{"id": string, "date": string?(yyyy-MM-dd，daily任务需要), "completed": bool}
+- 请求体：{"id": string, "date": string?(yyyy-MM-dd，daily任务需要),
+  "completed": bool, "subtaskId": string?, "createNextRecurrence": bool?}
 - 返回：{"success": true}
+
+#### POST /todo/score
+- 请求体：{"date": string?(yyyy-MM-dd), "score": int}
+- 返回：{"success": true, "date": string, "score": int}
 
 #### GET /todo/stats
 - 返回：{"today_total": int, "today_completed": int, "overdue": int}
@@ -67,55 +87,79 @@
 #### GET /finance/summary
 - 查询参数：month=yyyy-MM（可选，默认当月）
 - 返回：{
+    "month": "yyyy-MM",
+    "defaultCurrency": string,
     "income": double,
     "expense": double, 
     "balance": double,
-    "accounts": [ {id, name, type, currency, balance(计算值)} ],
+    "total_assets": double,
+    "accounts": [ {id, name, type, bankOrApp, currency, balance, convertedBalance, defaultCurrency, fee waiver fields, modifiedAt} ],
+    "category_totals": [ {categoryId, name, type, amount, count, currency} ],
     "top_expense_categories": [ {name, amount, count} ]
   }
+  收入、支出、结余、分类和总资产使用 FinanceData.defaultCurrency 与历史 rateSnapshotId 折算。
+
+#### GET /finance/accounts
+- 查询参数：type=fund|credit|recharge|financial（可选）
+- 返回账户列表，必须省略 securityCode、cardNumber、expiryDate 等敏感字段。
+
+#### GET /finance/categories
+- 查询参数：type=expense|income|transfer（可选）
+- 返回分类列表，包含 icon JSON。
 
 #### GET /finance/transactions
-- 查询参数：limit=20（默认）, offset=0, type=expense|income|transfer（可选）
-- 返回最近的交易记录列表
+- 查询参数：limit=20（默认）, offset=0, type=expense|income|transfer（可选）,
+  month=yyyy-MM（可选）, start/startDate, end/endDate, accountId, categoryId
+- 返回最近的交易记录列表，包含 account/category display names、transfer fields、
+  rateSnapshotId、subscriptionId、modifiedAt
 
 #### POST /finance/add_transaction
 - 请求体：{
     "type": "expense"|"income"|"transfer",
     "amount": number,
-    "currency": string?,（默认CNY）
+    "currency": string?,（默认源账户币种）
     "accountId": string,
     "toAccountId": string?,（转账用）
+    "toAmount": number?,（跨币种转账用）
+    "toCurrency": string?,（默认目标账户币种）
     "categoryId": string?,
     "note": string?,
     "date": string?（ISO8601，默认now）
   }
-- 返回：{"success": true, "id": string}
+- 校验 account/category id，category type 必须与交易类型一致；保存当前 rateSnapshotId。
+- 返回：{"success": true, "id": string, "transaction": {...}}
 
 #### GET /finance/subscriptions
-- 返回所有活跃订阅及下次扣款日期
-- 返回：[ {id, name, emoji, amount, currency, nextBillingDate, billingCycleType} ]
+- 查询参数：includeInactive=true（可选）
+- 返回订阅、账户/分类名称、周期、试用、取消信息、备注、modifiedAt 和下次扣款日期
 
 ### Weight 接口
 
 #### GET /weight/list
 - 查询参数：limit=30（默认）
-- 返回最近体重记录：[ {id, weight, date} ]
+- 返回最近体重记录：[ {id, weight, bodyFat, bustCm, waistCm, hipCm,
+  effectiveMeasurements, date, datetime, notes, modifiedAt} ]
 
 #### POST /weight/add
-- 请求体：{"weight": number, "date": string?（ISO8601，默认now）}
-- 返回：{"success": true, "id": string}
+- 请求体：{"weight": number, "bodyFat": number?, "bustCm": number?,
+  "waistCm": number?, "hipCm": number?, "notes": string?,
+  "date": string?（ISO8601，默认now）}
+- 返回：{"success": true, "id": string, "record": {...}}
 
 #### GET /weight/stats
-- 返回：{"latest": double?, "avg_7d": double?, "avg_30d": double?, "trend": "up"|"down"|"stable"|"unknown"}
+- 返回：{"latest": double?, "avg_7d": double?, "avg_30d": double?,
+  "trend": "up"|"down"|"stable"|"unknown", "height": double?, "bmi": double?,
+  "waistHipRatio": double?, "bodyFat": double?, "latestRecord": {...}?,
+  "effectiveMeasurements": {...}?}
 
 ## 实现要点
 1. 统一返回 Content-Type: application/json
 2. 错误时返回 {"error": "描述"} + 合适的 HTTP 状态码
 3. 添加 CORS 中间件（Access-Control-Allow-Origin: *，Allow-Headers 包含 Authorization）
-4. finance/summary 中账户余额需要从 Transaction 记录动态计算
-   （考虑 forcedBalance/forcedBalanceDate 作为基准点）
+4. finance/summary 中账户余额需要从 Transaction 记录动态计算；forcedBalance 字段是迁移兼容哨兵，不再作为实时余额基准
 5. Todo 的 daily 任务需要考虑 startDate/deletedDate 过滤有效模板
 6. 所有存储读取方式参考项目中已有的 Storage service 模式（读写 JSON 文件）
+7. 当配置了 username + password，所有非 OPTIONS 请求（包括 localhost）都必须校验 Basic Auth
 
 ## 已踩坑记录（必须遵守，参考 MyAnime 实现）
 
