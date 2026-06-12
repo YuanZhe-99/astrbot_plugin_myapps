@@ -8,7 +8,7 @@ This file is the operating guide for agents working on **astrbot_plugin_myapps**
 - **Description:** AstrBot plugin integrating MyAnime, MyDevice, and MyDay with LLM Function Calling natural-language interaction plus a traditional `/myapps` command.
 - **Author:** `YuanZhe-99`.
 - **License:** GPL-3.0.
-- **Current version:** `0.3.1` in `metadata.yaml`.
+- **Current version:** `0.4.1` in `metadata.yaml`.
 - **Framework:** AstrBot Star plugin written in async Python.
 - **Runtime dependency:** `aiohttp`, normally bundled with AstrBot.
 - **Repository:** Use the current runtime workspace root / repository path instead of hard-coding a machine-specific absolute path.
@@ -84,7 +84,7 @@ Default local API targets:
 
 | App | Default base URL | Purpose |
 | --- | --- | --- |
-| MyAnime | `http://localhost:7788` | Anime tracking/search/history |
+| MyAnime | `http://localhost:7788` | Anime tracking/search/history/ranking |
 | MyDevice | `http://localhost:7789` | Device inventory/search/stats |
 | MyDay | `http://localhost:7790` | Todo, finance, and weight |
 
@@ -141,8 +141,9 @@ Do not commit real Basic Auth credentials or private allow-list sender IDs.
 | `anime_list` | `season` | List tracked anime for `current`, `YYYYQn`, `unassigned`, or `all`. |
 | `anime_unwatched` | none | List aired but unwatched episodes. |
 | `anime_history` | `season` | Show viewing progress/history for a season filter. |
+| `anime_ranking` | `time`, `season`, `year`, `start`, `end`, `anime_type`, `field`, `order`, `limit` | Show rating rankings by all/quarter/year/range, type, rating field, order, and limit. |
 
-MyAnime list/history API responses are expected to be objects with `total`, `counts`, and `data`. `counts` may include `completed`, `inProgress`, `notStarted`, and `abandoned`. `nextEpisodeAirDate` is expected to be UTC-compatible so `datetime.now(timezone.utc)` comparisons are meaningful.
+MyAnime list/history API responses are expected to be objects with `total`, `counts`, and `data`. `counts` may include `completed`, `watching`, `inProgress`, `notStarted`, `dropped`, and `abandoned`. Item `status` values are `completed`, `watching`, `dropped`, and `notStarted`. `nextEpisodeAirDate` is expected to be UTC-compatible so `datetime.now(timezone.utc)` comparisons are meaningful. Ranking responses are expected to include `total`, `filters`, `sort`, `limit`, and ranked `data` rows with `rank`, `score`, and rating summary fields.
 
 ### MyDevice
 
@@ -196,7 +197,7 @@ The plugin calls these endpoints:
 
 | App | Endpoints |
 | --- | --- |
-| MyAnime | `GET /ping`, `POST /anime/search`, `POST /anime/add`, `GET /anime/list`, `GET /anime/unwatched`, `GET /anime/history` |
+| MyAnime | `GET /ping`, `POST /anime/search`, `POST /anime/add`, `GET /anime/list`, `GET /anime/unwatched`, `GET /anime/history`, `GET /anime/ranking` |
 | MyDevice | `GET /ping`, `GET /device/list`, `GET /device/search`, `POST /device/add`, `GET /device/stats` |
 | MyDay | `GET /ping`, `GET /todo/list`, `POST /todo/add`, `GET /todo/stats`, `GET /finance/summary`, `POST /finance/add_transaction`, `GET /finance/subscriptions`, `POST /weight/add`, `GET /weight/stats` |
 
@@ -242,3 +243,5 @@ Use the narrowest relevant verification. Documentation-only changes usually need
 - `v0.2.3`: Fixed timezone comparison for MyAnime `nextEpisodeAirDate` by comparing against UTC.
 - `v0.3.0`: Added `allowed_sender_ids` privacy protection and independent MyDay Todo/Finance/Weight module toggles.
 - `v0.3.1`: MyAnime list/history consume `total`, `counts`, and `data`, show full summary counts, and classify abandoned anime correctly.
+- `v0.4.0`: Added MyDevice service, network, and dataset query tools plus richer device detail formatting.
+- `v0.4.1`: Added MyAnime rating ranking tool and consumed the refreshed MyAnime status/progress/rating API fields.

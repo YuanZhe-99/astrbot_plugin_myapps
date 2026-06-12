@@ -6,7 +6,7 @@
 
 | App | 功能 | 示例自然语言 |
 |-----|------|-------------|
-| 📺 **MyAnime** | 添加番剧、查看追番列表、未看番剧、观看历史 | 「帮我追葬送的芙莉莲」「我有什么番没看完」 |
+| 📺 **MyAnime** | 添加番剧、查看追番列表、未看番剧、观看历史、评分排行 | 「帮我追葬送的芙莉莲」「我有什么番没看完」「我的番剧评分排行」 |
 | 💻 **MyDevice** | 查询设备列表、搜索设备规格、添加设备、统计 | 「我有哪些笔记本」「我的 MacBook 配置是什么」 |
 | 📅 **MyDay** | 查看/添加待办、收支摘要、记账、订阅查询、体重记录/统计 | 「今天有什么待办」「本月花了多少」「记录今天体重65.5kg」 |
 
@@ -101,6 +101,10 @@ Bot:  有 3 部番剧待看：
       · 葬送的芙莉莲 — 待看第8/28集（周五 23:00播）
       · ...
 
+用户: 我的番剧评分排行？
+Bot:  🏆 MyAnime评分排行（全部，全部类型，综合高到低，共12部）
+      1. 葬送的芙莉莲 — 9.5分（✅已看完 | 28/28集 | 评分9.5）
+
 用户: 我的电脑设备有哪些？
 Bot:  找到 2 台 laptop 设备：
       · MacBook Pro 14（Apple M3 Pro）
@@ -129,7 +133,7 @@ Bot:  已记录体重 65.2 kg！
 
 | App | 端口 | 主要端点 |
 |-----|------|---------|
-| MyAnime | 7788 | `/ping` `/anime/search` `/anime/add` `/anime/list` `/anime/unwatched` `/anime/history` |
+| MyAnime | 7788 | `/ping` `/anime/search` `/anime/add` `/anime/list` `/anime/unwatched` `/anime/history` `/anime/ranking` |
 | MyDevice | 7789 | `/ping` `/device/list` `/device/search` `/device/add` `/device/stats` |
 | MyDay | 7790 | `/ping` `/todo/list` `/todo/add` `/todo/complete` `/todo/stats` `/finance/summary` `/finance/transactions` `/finance/add_transaction` `/finance/subscriptions` `/weight/list` `/weight/add` `/weight/stats` |
 

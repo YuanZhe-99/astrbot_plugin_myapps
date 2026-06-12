@@ -1,5 +1,16 @@
 # 更新日志
 
+## v0.4.1
+
+### 新增
+
+1. **MyAnime评分排行**：新增 `anime_ranking` 工具，支持按全部/季度/年份/季度范围、番剧类型、评分项、升降序和数量限制查询评分榜。
+
+### 改动
+
+1. `anime_list` 和 `anime_history` 优先使用 MyAnime API 返回的统一 `status`、进度计数和评分摘要，状态分类与 MyAnime 统计页保持一致。
+2. MyAnime API 文档更新到 `/anime/ranking` 和扩展后的列表字段。
+
 ## v0.4.0
 
 ### 新增

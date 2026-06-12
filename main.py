@@ -6,11 +6,36 @@ AstrBot Plugin: astrbot_plugin_myapps
 """
 import base64
 from datetime import datetime, timezone
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 import aiohttp
 from astrbot.api import star, llm_tool, AstrBotConfig
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.core import logger
+
+
+ANIME_STATUS_LABELS = {
+    "completed": "✅已看完",
+    "watching": "▶进行中",
+    "dropped": "🚫已弃番",
+    "notStarted": "⏸️未开始",
+}
+
+ANIME_RATING_FIELD_LABELS = {
+    "overall": "综合",
+    "visual": "画面/演出",
+    "story": "剧情",
+    "character": "角色",
+    "music": "音乐/音效",
+    "enjoyment": "观感/推荐度",
+}
+
+ANIME_TYPE_LABELS = {
+    "singleCour": "单季",
+    "halfYear": "半年番",
+    "fullYear": "年番",
+    "longRunning": "长篇",
+    "allAtOnce": "全集上线",
+}
 
 
 def _make_auth_header(username: str, password: str) -> dict:
@@ -50,6 +75,76 @@ async def _check(base: str, name: str, *, auth: dict | None = None) -> bool:
 
 def _dow(day) -> str:
     return ({1:"周一",2:"周二",3:"周三",4:"周四",5:"周五",6:"周六",7:"周日"}.get(day,"")) if day else ""
+
+
+def _format_anime_score(score) -> str:
+    try:
+        value = float(score)
+        return str(int(value)) if value.is_integer() else f"{value:.1f}"
+    except Exception:
+        return "?"
+
+
+def _anime_status_text(anime: dict) -> str:
+    status = anime.get("status")
+    if status in ANIME_STATUS_LABELS:
+        if status == "watching":
+            nxt = anime.get("nextUnwatchedEpisode")
+            air = anime.get("nextEpisodeAirDate")
+            if nxt and air and air > datetime.now(timezone.utc).isoformat():
+                return f"▶第{nxt}集等待更新"
+            if nxt:
+                return f"▶第{nxt}集待看"
+        return ANIME_STATUS_LABELS[status]
+
+    nxt = anime.get("nextUnwatchedEpisode")
+    if anime.get("isCompleted"):
+        return ANIME_STATUS_LABELS["completed"]
+    if nxt:
+        air = anime.get("nextEpisodeAirDate")
+        if air and air > datetime.now(timezone.utc).isoformat():
+            return f"▶第{nxt}集等待更新"
+        return f"▶第{nxt}集待看"
+    return ANIME_STATUS_LABELS["dropped"]
+
+
+def _anime_progress_text(anime: dict) -> str:
+    watched = anime.get("watchedEpisodes")
+    total = anime.get("totalEpisodes")
+    aired = anime.get("airedEpisodes")
+    if watched is not None and total:
+        return f"{watched}/{total}集"
+    if watched is not None and aired is not None:
+        return f"已看{watched}/已播{aired}集"
+    return ""
+
+
+def _anime_history_item_text(anime: dict) -> str:
+    progress = _anime_progress_text(anime)
+    if not progress:
+        progress = f"{anime.get('watchedEpisodes', 0)}/{anime.get('totalEpisodes', '?')}集"
+    return f"{anime.get('title','?')}（{progress}）"
+
+
+def _anime_rating_text(anime: dict) -> str:
+    rating = anime.get("rating") or {}
+    score = rating.get("effectiveOverall")
+    if score is None:
+        return ""
+    return f"评分{_format_anime_score(score)}"
+
+
+def _anime_ranking_filter_text(filters: dict) -> str:
+    time_value = filters.get("time")
+    if time_value == "quarter":
+        return filters.get("season") or "当前季度"
+    if time_value == "year":
+        return str(filters.get("year") or "当前年份")
+    if time_value == "range":
+        start = filters.get("start") or "?"
+        end = filters.get("end") or "?"
+        return f"{start}~{end}"
+    return "全部"
 
 
 def _short_text(text, limit: int = 90) -> str:
@@ -232,27 +327,20 @@ class Main(star.Star):
         # Summary line with counts
         parts = []
         if counts.get("completed"): parts.append(f"完结{counts['completed']}")
-        if counts.get("inProgress"): parts.append(f"进行中{counts['inProgress']}")
+        if counts.get("watching") or counts.get("inProgress"): parts.append(f"进行中{counts.get('watching', counts.get('inProgress'))}")
         if counts.get("notStarted"): parts.append(f"未开始{counts['notStarted']}")
-        if counts.get("abandoned"): parts.append(f"弃番{counts['abandoned']}")
+        if counts.get("dropped") or counts.get("abandoned"): parts.append(f"弃番{counts.get('dropped', counts.get('abandoned'))}")
         summary = f"共{total}部（{'、'.join(parts)}）"
         if len(data) < total:
             summary += f"，以下随机展示{len(data)}部"
         lines.append(summary + "：")
         for a in data:
             ep = a.get("totalEpisodes")
-            nxt = a.get("nextUnwatchedEpisode")
-            if a.get("isCompleted"):
-                status = "✅已完结"
-            elif nxt:
-                air = a.get("nextEpisodeAirDate")
-                if air and air > datetime.now(timezone.utc).isoformat():
-                    status = f"▶第{nxt}集等待更新"
-                else:
-                    status = f"▶第{nxt}集待看"
-            else:
-                status = "🚫已弃番"
-            lines.append(f"· {a.get('title','?')}（{ep or '?'}集） {status}")
+            status = _anime_status_text(a)
+            rating = _anime_rating_text(a)
+            progress = _anime_progress_text(a)
+            details = " | ".join(x for x in [status, progress, rating] if x)
+            lines.append(f"· {a.get('title','?')}（{ep or '?'}集） {details}")
         return "\n".join(lines)
 
     @llm_tool(name="anime_unwatched")
@@ -276,7 +364,9 @@ class Main(star.Star):
             dow = _dow(a.get("airDayOfWeek"))
             airt = a.get("airTime") or ""
             bc = f"（{dow} {airt}播）".strip("（ ）") if dow else ""
-            lines.append(f"· {a.get('title','?')} — 待看第{nxt}/{total or '?'}集 {bc}")
+            aired = a.get("airedUnwatchedEpisodes")
+            suffix = f"，已播未看{aired}集" if aired and aired > 1 else ""
+            lines.append(f"· {a.get('title','?')} — 待看第{nxt}/{total or '?'}集{suffix} {bc}")
         return "\n".join(lines)
 
     @llm_tool(name="anime_history")
@@ -300,17 +390,21 @@ class Main(star.Star):
         data = resp.get("data", [])
         if not data:
             return "还没有观看历史。"
-        done = [a for a in data if a.get("isCompleted")]
-        abandoned = [a for a in data if not a.get("isCompleted") and a.get("nextUnwatchedEpisode") is None]
-        ing = [a for a in data if not a.get("isCompleted") and a.get("nextUnwatchedEpisode") is not None and a.get("watchedEpisodes", 0) > 0]
-        ns = [a for a in data if not a.get("isCompleted") and a.get("nextUnwatchedEpisode") is not None and a.get("watchedEpisodes", 0) == 0]
+        done = [a for a in data if a.get("status") == "completed" or a.get("isCompleted")]
+        abandoned = [a for a in data if a.get("status") == "dropped"]
+        ing = [a for a in data if a.get("status") == "watching"]
+        ns = [a for a in data if a.get("status") == "notStarted"]
+        if not any([done, abandoned, ing, ns]):
+            abandoned = [a for a in data if not a.get("isCompleted") and a.get("nextUnwatchedEpisode") is None]
+            ing = [a for a in data if not a.get("isCompleted") and a.get("nextUnwatchedEpisode") is not None and a.get("watchedEpisodes", 0) > 0]
+            ns = [a for a in data if not a.get("isCompleted") and a.get("nextUnwatchedEpisode") is not None and a.get("watchedEpisodes", 0) == 0]
         parts = []
         # Summary with full counts
         count_parts = []
         if counts.get("completed"): count_parts.append(f"完结{counts['completed']}")
-        if counts.get("inProgress"): count_parts.append(f"进行中{counts['inProgress']}")
+        if counts.get("watching") or counts.get("inProgress"): count_parts.append(f"进行中{counts.get('watching', counts.get('inProgress'))}")
         if counts.get("notStarted"): count_parts.append(f"未开始{counts['notStarted']}")
-        if counts.get("abandoned"): count_parts.append(f"弃番{counts['abandoned']}")
+        if counts.get("dropped") or counts.get("abandoned"): count_parts.append(f"弃番{counts.get('dropped', counts.get('abandoned'))}")
         header = f"共{total}部（{'、'.join(count_parts)}）"
         if len(data) < total:
             header += f"，以下随机展示{len(data)}部"
@@ -318,14 +412,83 @@ class Main(star.Star):
         if done:
             parts.append(f"✅ 已完结 {len(done)} 部：" + "、".join(a.get("title","?") for a in done))
         if ing:
-            rows = [f"{a.get('title','?')}（{a.get('watchedEpisodes',0)}/{a.get('totalEpisodes','?')}集）" for a in ing]
+            rows = [_anime_history_item_text(a) for a in ing]
             parts.append(f"▶ 进行中 {len(ing)} 部：" + "、".join(rows))
         if ns:
             parts.append(f"⏸️ 未开始 {len(ns)} 部：" + "、".join(a.get("title","?") for a in ns))
         if abandoned:
-            rows = [f"{a.get('title','?')}（{a.get('watchedEpisodes',0)}/{a.get('totalEpisodes','?')}集）" for a in abandoned]
+            rows = [_anime_history_item_text(a) for a in abandoned]
             parts.append(f"🚫 已弃番 {len(abandoned)} 部：" + "、".join(rows))
         return "\n".join(parts) if parts else "暂无记录。"
+
+    @llm_tool(name="anime_ranking")
+    async def anime_ranking(self, event: AstrMessageEvent, time: str, season: str, year: str, start: str, end: str, anime_type: str, field: str, order: str, limit: int):
+        """查询 MyAnime 的评分排行。当用户询问最好看、评分最高、排名、某季度/年份评分榜时调用。
+
+        Args:
+            time(string): 时间范围，可选 all/quarter/year/range，不筛选时传 all
+            season(string): time=quarter 时使用，格式 current 或 2026Q2；其他情况传空字符串
+            year(string): time=year 时使用，例如 2026；其他情况传空字符串
+            start(string): time=range 时的开始季度，例如 2026Q1；其他情况传空字符串
+            end(string): time=range 时的结束季度，例如 2026Q4；其他情况传空字符串
+            anime_type(string): 类型筛选，all/singleCour/halfYear/fullYear/longRunning/allAtOnce，不筛选传 all
+            field(string): 排序评分项，overall/visual/story/character/music/enjoyment，默认 overall
+            order(string): desc 或 asc，默认 desc
+            limit(number): 返回数量，1到100；不知道传20
+        """
+        if (deny := self._check_sender(event)): return deny
+        if not self._anime_enabled:
+            return "MyAnime 功能已关闭。"
+        if not await _check(self._anime_base, "MyAnime", auth=self._anime_auth):
+            return "MyAnime 客户端未运行。"
+
+        params = {
+            "time": (time or "all").strip() or "all",
+            "type": (anime_type or "all").strip() or "all",
+            "field": (field or "overall").strip() or "overall",
+            "order": (order or "desc").strip() or "desc",
+            "limit": str(limit or 20),
+        }
+        if params["time"] == "quarter":
+            params["season"] = (season or "current").strip() or "current"
+        elif params["time"] == "year":
+            params["year"] = (year or "").strip()
+        elif params["time"] == "range":
+            params["start"] = (start or "").strip()
+            params["end"] = (end or "").strip()
+
+        data = await _get(self._anime_base, f"/anime/ranking?{urlencode(params)}", auth=self._anime_auth)
+        if data is None:
+            return "获取 MyAnime 评分排行失败，请检查筛选条件。"
+
+        rows = data.get("data", [])
+        if not rows:
+            return "暂无符合条件的评分排行。"
+
+        total = data.get("total", len(rows))
+        filters = data.get("filters", {})
+        sort = data.get("sort", {})
+        field_name = sort.get("field") or params["field"]
+        field_label = ANIME_RATING_FIELD_LABELS.get(field_name, field_name)
+        order_label = "高到低" if (sort.get("order") or params["order"]) == "desc" else "低到高"
+        scope = _anime_ranking_filter_text(filters)
+        type_name = filters.get("type") or params["type"]
+        type_label = ANIME_TYPE_LABELS.get(type_name, "全部类型" if type_name == "all" else type_name)
+
+        header = f"🏆 MyAnime评分排行（{scope}，{type_label}，{field_label}{order_label}，共{total}部）"
+        if len(rows) < total:
+            header += f"\n以下显示前{len(rows)}部："
+        lines = [header]
+        for row in rows:
+            rank = row.get("rank") or "?"
+            title = row.get("title") or "?"
+            score = _format_anime_score(row.get("score"))
+            status = _anime_status_text(row)
+            progress = _anime_progress_text(row)
+            rating = _anime_rating_text(row)
+            tail = " | ".join(x for x in [status, progress, rating] if x)
+            lines.append(f"{rank}. {title} — {score}分" + (f"（{tail}）" if tail else ""))
+        return "\n".join(lines)
 
     # ────────────────────────────────────────
     #  MyDevice — 设备管理
@@ -906,7 +1069,7 @@ class Main(star.Star):
         lines = [
             "🗂️  MyApps 集成插件\n",
             "📺 MyAnime（番剧）",
-            "  自然语言：「帮我添加葬送的芙莉莲」「我有什么番没看」",
+            "  自然语言：「帮我添加葬送的芙莉莲」「我有什么番没看」「我的番剧评分排行」",
             "",
             "💻 MyDevice（设备）",
             "  自然语言：「我有哪些笔记本」「搜索我的 MacBook 配置」「查一下 Gitea 服务端口」「我的 Tailscale 网络有哪些设备」",

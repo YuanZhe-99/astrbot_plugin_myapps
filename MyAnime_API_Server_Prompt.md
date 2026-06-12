@@ -108,7 +108,7 @@ EpisodeStatus 枚举：unwatched, watched, skippedThisWeek
 
 ### GET /anime/list
 功能：返回所有番剧列表
-响应：JSON 数组，每项包含：
+响应：对象 {"total": int, "counts": object, "data": array}，data 每项包含：
   {
     "id": string,
     "title": string,           // displayTitle
@@ -121,11 +121,24 @@ EpisodeStatus 枚举：unwatched, watched, skippedThisWeek
     "airDayOfWeek": int?,
     "airTime": string?,
     "infoUrl": string?,
+    "watchUrl": string?,
+    "coverImage": string?,
+    "notes": string?,
     "isCompleted": bool,
+    "status": string,          // completed/watching/dropped/notStarted
     "nextUnwatchedEpisode": int?,
+    "nextEpisodeAirDate": string?, // UTC ISO 8601 with Z
     "type": string,            // effectiveType.name
-    "createdAt": string        // ISO 8601
+    "manualType": string?,
+    "watchedEpisodes": int,
+    "skippedEpisodes": int,
+    "airedEpisodes": int?,
+    "airedUnwatchedEpisodes": int?,
+    "rating": object?,         // overall/effectiveOverall/sub-scores
+    "createdAt": string,       // ISO 8601
+    "modifiedAt": string       // ISO 8601 UTC
   }
+counts 至少包含 completed/watching/inProgress/dropped/abandoned/notStarted。
 
 ---
 
@@ -138,9 +151,36 @@ EpisodeStatus 枚举：unwatched, watched, skippedThisWeek
 
 ### GET /anime/history
 功能：返回所有番剧及其观看进度统计
-响应：格式同 /anime/list，每项额外包含：
-  "watchedEpisodes": int,   // episodeStatuses 中值为 watched 的数量
-  "isCompleted": bool
+响应：格式同 /anime/list。
+
+---
+
+### GET /anime/ranking
+功能：返回按个人评分排序的番剧排行
+查询参数：
+  - time: all/quarter/year/range，默认 all
+  - season: time=quarter 时使用，current 或 YYYYQn
+  - year: time=year 时使用
+  - start/end: time=range 时使用，YYYYQn
+  - type: all/singleCour/halfYear/fullYear/longRunning/allAtOnce
+  - field: overall/visual/story/character/music/enjoyment，默认 overall
+  - order: desc/asc，默认 desc
+  - limit: 1..100，默认 20
+响应：
+  {
+    "total": int,
+    "filters": object,
+    "sort": {"field": string, "order": "desc"|"asc"},
+    "limit": int,
+    "data": [
+      {
+        "rank": int,
+        "score": number,
+        ... // 同 /anime/list 的番剧字段
+      }
+    ]
+  }
+错误：400 {"error": "..."} 用于无效筛选参数
 
 ---
 
@@ -236,7 +276,8 @@ lib/shared/services/local_api_server.dart 结构：
     static Future<void> loadConfig() async { ... }
 
     // 路由处理方法（GET /ping, POST /anime/search, POST /anime/add,
-    //              GET /anime/list, GET /anime/unwatched, GET /anime/history）
+    //              GET /anime/list, GET /anime/unwatched, GET /anime/history,
+    //              GET /anime/ranking）
 
     // 辅助：将 Anime 转为 Map<String, dynamic>
     static Map<String, dynamic> _animeToJson(Anime a) { ... }
