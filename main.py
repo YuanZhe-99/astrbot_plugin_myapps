@@ -6,6 +6,7 @@ AstrBot Plugin: astrbot_plugin_myapps
 """
 import base64
 from datetime import datetime, timezone
+from urllib.parse import quote
 import aiohttp
 from astrbot.api import star, llm_tool, AstrBotConfig
 from astrbot.api.event import AstrMessageEvent, filter
@@ -49,6 +50,41 @@ async def _check(base: str, name: str, *, auth: dict | None = None) -> bool:
 
 def _dow(day) -> str:
     return ({1:"周一",2:"周二",3:"周三",4:"周四",5:"周五",6:"周六",7:"周日"}.get(day,"")) if day else ""
+
+
+def _short_text(text, limit: int = 90) -> str:
+    if not text:
+        return ""
+    value = str(text).replace("\n", " ").strip()
+    return value if len(value) <= limit else value[:limit - 1] + "…"
+
+
+def _format_money(value) -> str:
+    if not isinstance(value, dict):
+        return ""
+    amount = value.get("amount")
+    currency = value.get("currency") or ""
+    converted = value.get("convertedAmount")
+    default_currency = value.get("defaultCurrency") or ""
+    try:
+        amount_text = f"{float(amount):,.2f}{currency}" if amount is not None else ""
+        if converted is not None and default_currency and default_currency != currency:
+            return f"{amount_text}（{float(converted):,.2f}{default_currency}）"
+        return amount_text
+    except Exception:
+        return str(amount) if amount is not None else ""
+
+
+def _format_endpoint(endpoint: dict) -> str:
+    label = endpoint.get("label") or ""
+    protocol = endpoint.get("protocol") or ""
+    port = endpoint.get("portText") or endpoint.get("port") or ""
+    scope = endpoint.get("scope") or ""
+    path = endpoint.get("path") or ""
+    prefix = f"{label} " if label else ""
+    target = f"{protocol}:{port}" if port else protocol
+    suffix = " ".join(x for x in [scope, path] if x)
+    return f"{prefix}{target} {suffix}".strip()
 
 
 # ════════════════════════════════════════════
@@ -321,10 +357,13 @@ class Main(star.Star):
             os_ = d.get("os") or ""
             ram = d.get("ram") or ""
             cpu_m = (d.get("cpu") or {}).get("model") or ""
-            details = " | ".join(x for x in [cpu_m, ram, os_] if x)
+            lifecycle = d.get("lifecycleStatus")
+            lifecycle_text = "" if lifecycle in (None, "inService") else f" | {lifecycle}"
+            location = d.get("locationName") or ""
+            details = " | ".join(x for x in [cpu_m, ram, os_, location] if x)
             lines.append(f"· [{d.get('category','?')}] {d.get('name','?')}{spec}")
             if details:
-                lines.append(f"   {details}")
+                lines.append(f"   {details}{lifecycle_text}")
         return "\n".join(lines)
 
     @llm_tool(name="device_search")
@@ -339,7 +378,7 @@ class Main(star.Star):
             return "MyDevice 功能已关闭。"
         if not await _check(self._device_base, "MyDevice", auth=self._device_auth):
             return "MyDevice 客户端未运行。"
-        data = await _get(self._device_base, f"/device/search?q={keyword}", auth=self._device_auth)
+        data = await _get(self._device_base, f"/device/search?q={quote(keyword or '')}", auth=self._device_auth)
         if not data:
             return f"没有找到包含「{keyword}」的设备。"
         lines = [f"找到 {len(data)} 台匹配设备："]
@@ -357,6 +396,17 @@ class Main(star.Star):
             if storage_str:     lines.append(f"   存储：{storage_str}")
             if d.get("os"):     lines.append(f"   系统：{d['os']}")
             if d.get("purchaseDate"): lines.append(f"   购入：{d['purchaseDate'][:10]}")
+            if d.get("locationName"): lines.append(f"   位置：{d['locationName']}")
+            lifecycle = d.get("lifecycleStatus")
+            if lifecycle and lifecycle != "inService":
+                lines.append(f"   状态：{lifecycle}")
+            purchase_price = _format_money(d.get("purchasePrice"))
+            sold_price = _format_money(d.get("soldPrice"))
+            if purchase_price: lines.append(f"   购入价格：{purchase_price}")
+            if sold_price:     lines.append(f"   售出价格：{sold_price}")
+            recurring = d.get("recurringCosts") or []
+            if recurring:
+                lines.append(f"   周期费用：{len(recurring)} 项")
         return "\n".join(lines)
 
     @llm_tool(name="device_add")
@@ -419,6 +469,193 @@ class Main(star.Star):
         recent = data.get("recentlyAdded", [])
         if recent:
             lines.append("最近添加：" + "、".join(d.get("name","?") for d in recent))
+        lifecycle = data.get("byLifecycle", {})
+        lifecycle_parts = []
+        if lifecycle.get("retired"): lifecycle_parts.append(f"退役{lifecycle['retired']}")
+        if lifecycle.get("sold"): lifecycle_parts.append(f"售出{lifecycle['sold']}")
+        if lifecycle_parts:
+            lines.append("生命周期：" + "、".join(lifecycle_parts))
+        services = data.get("services") or {}
+        if services:
+            lines.append(f"服务：{services.get('total',0)} 个，路由 {services.get('routes',0)} 条，端点 {services.get('endpoints',0)} 个")
+        networks = data.get("networks") or {}
+        if networks:
+            lines.append(f"网络：{networks.get('total',0)} 个，分配 {networks.get('assignments',0)} 条")
+        datasets = data.get("datasets") or {}
+        if datasets:
+            lines.append(f"数据集：{datasets.get('total',0)} 个，存储链接 {datasets.get('storageLinks',0)} 条")
+        finance = data.get("finance") or {}
+        if finance.get("devices"):
+            total_cost = finance.get("totalCost")
+            cost_text = f"，总成本 {float(total_cost):,.2f}" if isinstance(total_cost, (int, float)) else ""
+            lines.append(f"财务记录：{finance.get('devices')} 台{cost_text}")
+        return "\n".join(lines)
+
+    @llm_tool(name="device_service_search")
+    async def device_service_search(self, event: AstrMessageEvent, keyword: str):
+        """查询 MyDevice 中手动记录的服务、端口和端点。当用户问某个服务在哪、端口是什么、有哪些服务时调用。
+
+        Args:
+            keyword(string): 服务名、端口、设备名、标签、网络名等关键词；查询全部服务时传空字符串
+        """
+        if (deny := self._check_sender(event)): return deny
+        if not self._device_enabled:
+            return "MyDevice 功能已关闭。"
+        if not await _check(self._device_base, "MyDevice", auth=self._device_auth):
+            return "MyDevice 客户端未运行。"
+        path = f"/service/search?q={quote(keyword)}" if keyword else "/service/list"
+        data = await _get(self._device_base, path, auth=self._device_auth)
+        if data is None:
+            return "获取服务列表失败。"
+        if not data:
+            return f"没有找到{'包含「' + keyword + '」的' if keyword else '任何'}服务。"
+        lines = [f"找到 {len(data)} 个服务："]
+        for s in data[:12]:
+            icon = s.get("icon") or "🔧"
+            device = s.get("deviceName") or s.get("deviceId") or "未知设备"
+            kind = s.get("kind") or "custom"
+            state = s.get("state") or "unknown"
+            lines.append(f"· {icon} {s.get('name','?')}（{device}，{kind}/{state}）")
+            endpoints = [_format_endpoint(e) for e in (s.get("endpoints") or [])]
+            endpoints = [e for e in endpoints if e]
+            if endpoints:
+                lines.append("   端点：" + "、".join(endpoints[:4]))
+            tags = s.get("tags") or []
+            if tags:
+                lines.append("   标签：" + "、".join(tags[:6]))
+            if s.get("notes") and keyword and keyword.lower() in str(s.get("notes")).lower():
+                lines.append(f"   备注：{_short_text(s.get('notes'))}")
+        if len(data) > 12:
+            lines.append(f"还有 {len(data) - 12} 个结果未显示。")
+        return "\n".join(lines)
+
+    @llm_tool(name="device_service_routes")
+    async def device_service_routes(self, event: AstrMessageEvent):
+        """查询 MyDevice 中手动记录的服务访问路径。当用户问公网访问、反代、隧道、FRP、域名路由时调用。
+
+        Args:
+        """
+        if (deny := self._check_sender(event)): return deny
+        if not self._device_enabled:
+            return "MyDevice 功能已关闭。"
+        if not await _check(self._device_base, "MyDevice", auth=self._device_auth):
+            return "MyDevice 客户端未运行。"
+        data = await _get(self._device_base, "/service/routes", auth=self._device_auth)
+        if data is None:
+            return "获取服务路由失败。"
+        if not data:
+            return "还没有记录服务访问路径。"
+        lines = [f"服务访问路径（共 {len(data)} 条）："]
+        for r in data[:12]:
+            source = r.get("sourceServiceName") or r.get("sourceServiceId") or "未知服务"
+            targets = r.get("publicTargets") or []
+            target = r.get("finalUrl") or (targets[0] if targets else "")
+            access = r.get("accessLevel") or "lan"
+            hop_count = len(r.get("hops") or [])
+            line = f"· {source} -> {target or '未填写目标'}（{access}"
+            line += f"，{hop_count} hops" if hop_count else ""
+            line += "）"
+            lines.append(line)
+            if len(targets) > 1:
+                lines.append("   其他目标：" + "、".join(targets[1:5]))
+            if r.get("notes"):
+                lines.append(f"   备注：{_short_text(r.get('notes'))}")
+        if len(data) > 12:
+            lines.append(f"还有 {len(data) - 12} 条路径未显示。")
+        return "\n".join(lines)
+
+    @llm_tool(name="device_service_stats")
+    async def device_service_stats(self, event: AstrMessageEvent):
+        """获取 MyDevice 服务模块统计。当用户问服务数量、端点数量、路由数量时调用。
+
+        Args:
+        """
+        if (deny := self._check_sender(event)): return deny
+        if not self._device_enabled:
+            return "MyDevice 功能已关闭。"
+        if not await _check(self._device_base, "MyDevice", auth=self._device_auth):
+            return "MyDevice 客户端未运行。"
+        data = await _get(self._device_base, "/service/stats", auth=self._device_auth)
+        if not data:
+            return "获取服务统计失败。"
+        lines = [
+            f"🔧 服务统计：{data.get('total',0)} 个服务，{data.get('endpoints',0)} 个端点，{data.get('routes',0)} 条访问路径",
+            f"涉及设备：{data.get('devices',0)} 台，公网/分组目标：{data.get('publicTargets',0)} 个",
+        ]
+        by_kind = data.get("byKind") or {}
+        if by_kind:
+            lines.append("类型：" + "、".join(f"{k}:{v}" for k, v in by_kind.items() if v))
+        by_state = data.get("byState") or {}
+        if by_state:
+            lines.append("状态：" + "、".join(f"{k}:{v}" for k, v in by_state.items() if v))
+        return "\n".join(lines)
+
+    @llm_tool(name="device_network_search")
+    async def device_network_search(self, event: AstrMessageEvent, keyword: str):
+        """查询 MyDevice 中记录的网络和设备 IP 分配。当用户问网络、IP、子网、Tailscale/WireGuard/局域网时调用。
+
+        Args:
+            keyword(string): 网络名、设备名、主机名、IP、子网等关键词；查询全部网络时传空字符串
+        """
+        if (deny := self._check_sender(event)): return deny
+        if not self._device_enabled:
+            return "MyDevice 功能已关闭。"
+        if not await _check(self._device_base, "MyDevice", auth=self._device_auth):
+            return "MyDevice 客户端未运行。"
+        path = f"/network/search?q={quote(keyword)}" if keyword else "/network/list"
+        data = await _get(self._device_base, path, auth=self._device_auth)
+        if data is None:
+            return "获取网络列表失败。"
+        if not data:
+            return f"没有找到{'包含「' + keyword + '」的' if keyword else '任何'}网络。"
+        lines = [f"找到 {len(data)} 个网络："]
+        for n in data[:10]:
+            bits = [n.get("type"), n.get("subnet"), n.get("gateway")]
+            lines.append(f"· {n.get('name','?')}（{' | '.join(x for x in bits if x)}）")
+            assignments = n.get("assignments") or []
+            shown = []
+            for a in assignments[:4]:
+                host = a.get("hostname") or a.get("deviceName") or a.get("deviceId") or "未知设备"
+                addr = a.get("ipAddress") or a.get("addressMode") or ""
+                shown.append(f"{host}:{addr}" if addr else host)
+            if shown:
+                lines.append("   分配：" + "、".join(shown))
+        if len(data) > 10:
+            lines.append(f"还有 {len(data) - 10} 个网络未显示。")
+        return "\n".join(lines)
+
+    @llm_tool(name="device_dataset_search")
+    async def device_dataset_search(self, event: AstrMessageEvent, keyword: str):
+        """查询 MyDevice 中记录的数据集和它们链接的设备存储。当用户问数据集、资料、备份、存在哪块盘时调用。
+
+        Args:
+            keyword(string): 数据集名、设备名、硬盘品牌/容量等关键词；查询全部数据集时传空字符串
+        """
+        if (deny := self._check_sender(event)): return deny
+        if not self._device_enabled:
+            return "MyDevice 功能已关闭。"
+        if not await _check(self._device_base, "MyDevice", auth=self._device_auth):
+            return "MyDevice 客户端未运行。"
+        path = f"/dataset/search?q={quote(keyword)}" if keyword else "/dataset/list"
+        data = await _get(self._device_base, path, auth=self._device_auth)
+        if data is None:
+            return "获取数据集列表失败。"
+        if not data:
+            return f"没有找到{'包含「' + keyword + '」的' if keyword else '任何'}数据集。"
+        lines = [f"找到 {len(data)} 个数据集："]
+        for ds in data[:12]:
+            lines.append(f"· {ds.get('emoji','📁')} {ds.get('name','?')}")
+            links = ds.get("storageLinks") or []
+            parts = []
+            for link in links[:4]:
+                device = link.get("deviceName") or link.get("deviceId") or "未知设备"
+                storage = link.get("storage") or []
+                caps = [s.get("capacity") for s in storage if s.get("capacity")]
+                parts.append(f"{device}({ '、'.join(caps) if caps else 'slot ' + ','.join(map(str, link.get('storageIndices') or [])) })")
+            if parts:
+                lines.append("   存储：" + "、".join(parts))
+        if len(data) > 12:
+            lines.append(f"还有 {len(data) - 12} 个数据集未显示。")
         return "\n".join(lines)
 
     # ────────────────────────────────────────
@@ -672,7 +909,7 @@ class Main(star.Star):
             "  自然语言：「帮我添加葬送的芙莉莲」「我有什么番没看」",
             "",
             "💻 MyDevice（设备）",
-            "  自然语言：「我有哪些笔记本」「搜索我的 MacBook 配置」「添加一台设备」",
+            "  自然语言：「我有哪些笔记本」「搜索我的 MacBook 配置」「查一下 Gitea 服务端口」「我的 Tailscale 网络有哪些设备」",
             "",
             "📅 MyDay（日程/财务/体重）",
             "  自然语言：「今天有什么待办」「本月花了多少钱」「记录今天体重65kg」",

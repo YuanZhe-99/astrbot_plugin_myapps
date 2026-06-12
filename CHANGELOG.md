@@ -1,5 +1,22 @@
 # 更新日志
 
+## v0.4.0
+
+### 新增
+
+1. **服务查询**：新增 `device_service_search` 工具，支持按关键词搜索 MyDevice 中手动记录的服务、端口和端点。
+2. **服务路由**：新增 `device_service_routes` 工具，查询公网访问路径、反代、隧道、FRP、域名路由等信息。
+3. **服务统计**：新增 `device_service_stats` 工具，获取服务数量、端点数量、路由数量等统计概览。
+4. **网络查询**：新增 `device_network_search` 工具，查询网络信息和设备 IP 分配（支持 Tailscale/WireGuard/局域网等）。
+5. **数据集查询**：新增 `device_dataset_search` 工具，查询数据集及其链接的设备存储信息。
+
+### 改动
+
+1. `device_list` 新增生命周期状态和位置信息显示。
+2. `device_search` 新增位置、生命周期状态、购入/售出价格、周期费用等详情。
+3. `device_stats` 新增生命周期统计、服务/网络/数据集概览和财务摘要。
+4. `device_search` 关键词现在正确进行 URL 编码。
+
 ## v0.3.1
 
 ### 修复
